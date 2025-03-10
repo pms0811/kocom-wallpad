@@ -24,6 +24,7 @@ from .const import _LOGGER, HEADER, TAILER
 class PacketQueue:
     """A queue of packets to be sent."""
     packet: bytearray
+    try_to_retry: bool
     retries: int = 0
 
 
@@ -39,7 +40,7 @@ class KocomClient:
         self.tasks: list[asyncio.Task] = []
         self.device_callbacks: list[Callable[[KocomPacket], Awaitable[None]]] = []
         self.packet_queue: asyncio.Queue[PacketQueue] = asyncio.Queue()
-        self.last_packet: KocomPacket | None = None
+        self.last_packet = None
 
     async def start(self) -> None:
         """Start the client."""
@@ -119,8 +120,7 @@ class KocomClient:
                 _LOGGER.debug(
                     f"{log_message}: {parsed_packet}, {parsed_packet._device}, {parsed_packet._last_data}"
                 )
-                if isinstance(parsed_packet, KocomPacket):
-                    self.last_packet = parsed_packet
+                self.last_packet = parsed_packet
 
                 if parsed_packet._device is None:
                     continue
@@ -139,9 +139,7 @@ class KocomClient:
                 _LOGGER.debug(f"Sending packet: {queue.packet.hex()}")
                 await self.connection.send(queue.packet)
 
-                if verify_crc(queue.packet) or (
-                    self.last_packet and self.last_packet._device is None
-                ):
+                if self.last_packet._device is None:
                     self.packet_queue.task_done()
                     continue
 
@@ -156,7 +154,7 @@ class KocomClient:
                             continue
 
                         for p in packet:
-                            if self.last_packet._device == p._device:
+                            if self.last_packet._device.state == p._device.state:
                                 found_match = True
                                 self.last_packet = None
                                 break
@@ -165,7 +163,7 @@ class KocomClient:
                             break
                         await asyncio.sleep(0.01)
 
-                    if not found_match:
+                    if not found_match and queue.try_to_retry:
                         _LOGGER.debug("Not received ACK, retrying...")
                         await self._handle_retry(queue)
                     else:
@@ -201,17 +199,17 @@ class KocomClient:
 
                 p[:0] = HEADER
                 if (crc := calculate_crc(p)) is None:
-                    _LOGGER.error(f"Failed to calculate checksum for packet: {p.hex()}")
+                    _LOGGER.error(f"Failed to calculate crc for packet: {p.hex()}")
                     continue
 
                 p.extend(crc)
                 p.extend(TAILER)
 
                 if not verify_crc(p):
-                    _LOGGER.error(f"Failed to verify checksum for packet: {p.hex()}")
+                    _LOGGER.error(f"Failed to verify crc for packet: {p.hex()}")
                     continue
 
-                queue = PacketQueue(packet=p)
+                queue = PacketQueue(packet=p, try_to_retry=False)
                 await self.packet_queue.put(queue)
         else:
             packet[:0] = HEADER
@@ -226,5 +224,5 @@ class KocomClient:
                 _LOGGER.error(f"Failed to verify checksum for packet: {packet.hex()}")
                 return
 
-            queue = PacketQueue(packet=packet)
+            queue = PacketQueue(packet=packet, try_to_retry=True)
             await self.packet_queue.put(queue)

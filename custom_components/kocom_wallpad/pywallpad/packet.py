@@ -74,11 +74,10 @@ class KocomPacket:
         self._address = self.src
         self._device: Device | None = None
         self._last_data: dict[str, Any] = {}
-        self._force_update: list[Device] = []
 
     def __repr__(self) -> str:
         """Return a string representation of the packet."""
-        return f"KocomPacket(packet_type={self.packet_type.name}, seq_number={self.seq_number:#x}, dest={self.dest.hex()}, src={self.src.hex()}, command={self.command.name}, payload={self.payload.hex()}, checksum={self.checksum:#x})"
+        return f"KocomPacket(packet_type={self.packet_type.name}, seq_number={hex(self.seq_number)}, dest={self.dest.hex()}, src={self.src.hex()}, command={self.command.name}, payload={self.payload.hex()}, checksum={hex(self.checksum)})"
     
     @property
     def device_type(self) -> DeviceType:
@@ -710,14 +709,6 @@ class EVPacket(KocomPacket):
         if not power:
             _LOGGER.debug(f"EV device is off. Ignoring power status.")
             return
-        self._force_update.append(
-            Device(
-                device_type=self.device_name(capital=True),
-                room_id=self.room_id,
-                device_id=self.device_id,
-                state={POWER: True},
-            )
-        )
         return super().make_packet(Command.ON, bytearray(self.payload))
 
 
@@ -739,13 +730,8 @@ class PacketParser:
         base_packet = PacketParser.parse(packet)
         
         if base_packet is None:
-            #_LOGGER.error(f"Failed to parse packet: {packet.hex()}")
             return []
-        if (
-            (base_packet.packet_type == PacketType.RECV and
-            base_packet.command == Command.SCAN) or 
-            base_packet.device_type == DeviceType.WALLPAD
-        ):
+        if base_packet.command != Command.STATUS:
             return [base_packet]
 
         if last_data:
@@ -757,11 +743,6 @@ class PacketParser:
             device_packet = deepcopy(base_packet)
             device_packet._device = device_data
             parsed_packets.append(device_packet)
-            
-        for device_update in base_packet._force_update:
-            update_packet = deepcopy(base_packet)
-            update_packet._device = device_update
-            parsed_packets.append(update_packet)
         
         return parsed_packets
 
@@ -783,7 +764,7 @@ class PacketParser:
         packet_class = device_class_map.get(device_type)
 
         if packet_class is None:
-            _LOGGER.warning(f"Unknown device type: {device_type:#x}, packet: {packet_data.hex()}")
+            _LOGGER.warning(f"Unknown device type: {hex(device_type)}, packet: {packet_data.hex()}")
             return None
 
         return packet_class(packet_data)
@@ -809,7 +790,6 @@ class DoorPhonePacket:
         self.device_id = f"{self.device_type}_{self.room_id}"
         
         self._device: Device = None
-        self._force_update: list[Device] = []
 
         if self.device_id not in self._last_data:
             self._last_data[self.device_id] = {}
@@ -841,11 +821,11 @@ class DoorPhonePacket:
         
         if self._last_data[self.device_id]["phone_id"] is None and self.src2 not in {0xFF, 0x31}:
             self._last_data[self.device_id]["phone_id"] = self.src2
-            _LOGGER.debug(f"Door phone - {self.room_id} phone id: {self._last_data[self.device_id]['phone_id']:#x}")
+            _LOGGER.debug(f"Door phone - {self.room_id} phone id: {hex(self._last_data[self.device_id]['phone_id'])}")
         
         if self.event == 0x24 and self.event == 0x00:
             _LOGGER.debug(f"Door phone - {self.room_id} opening at {datetime.now()}")
-            self._force_update.append(
+            devices.append(
                 Device(
                     device_type=self.device_type,
                     device_id=self.device_id,
@@ -855,7 +835,7 @@ class DoorPhonePacket:
             )
         if self.event == 0x04 and self.event2 == 0x00:
             _LOGGER.debug(f"Door phone - {self.room_id} exiting at {datetime.now()}")
-            self._force_update.append(
+            devices.append(
                 Device(
                     device_type=self.device_type,
                     device_id=self.device_id,
@@ -931,25 +911,8 @@ class DoorPhonePacket:
         ]
 
         if control == SHUTDOWN:
-            self._force_update.append(
-                Device(
-                    device_type=self.device_type,
-                    device_id=self.device_id,
-                    room_id=self.room_id,
-                    state={POWER: True},
-                    sub_id=SHUTDOWN,
-                )
-            )
             return self.make_door_phone_packets(shutdown_packet)
         else:
-            self._force_update.append(
-                Device(
-                    device_type=self.device_type,
-                    device_id=self.device_id,
-                    room_id=self.room_id,
-                    state={POWER: True},
-                )
-            )
             return self.make_door_phone_packets(open_packet)
 
 
@@ -970,10 +933,5 @@ class DoorPhoneParser:
             device_packet = deepcopy(base_packet)
             device_packet._device = device_data
             parsed_packets.append(device_packet)
-            
-        for device_update in base_packet._force_update:
-            update_packet = deepcopy(base_packet)
-            update_packet._device = device_update
-            parsed_packets.append(update_packet)
         
         return parsed_packets

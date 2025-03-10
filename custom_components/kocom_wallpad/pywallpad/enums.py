@@ -6,6 +6,7 @@ class PacketType(IntEnum):
     """Packet types for Kocom devices."""
     SEND = 0x0B
     RECV = 0x0D
+    CAST = 0x09
 
 class DeviceType(IntEnum):
     """Device types for Kocom devices."""
