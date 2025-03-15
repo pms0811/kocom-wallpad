@@ -67,12 +67,12 @@ class KocomClient:
         while True:
             try:
                 if not self.connection.is_connected:
-                    await asyncio.sleep(0.05)
+                    await asyncio.sleep(0.1)
                     continue
 
                 receive_data = await self.connection.receive()
                 if not receive_data:
-                    await asyncio.sleep(0.05)
+                    await asyncio.sleep(0.1)
                     continue
 
                 packets = self.parse_packets(receive_data)
@@ -139,7 +139,7 @@ class KocomClient:
                 _LOGGER.debug(f"Sending packet: {queue.packet.hex()}")
                 await self.connection.send(queue.packet)
 
-                if self.last_packet._device is None:
+                if not (self.last_packet and self.last_packet._device):
                     self.packet_queue.task_done()
                     continue
 
@@ -148,9 +148,9 @@ class KocomClient:
                     found_match = False
                     start_time = time.time()
 
-                    while (time.time() - start_time) < 0.5:
+                    while (time.time() - start_time) < 1.0:
                         if self.last_packet is None:
-                            await asyncio.sleep(0.01)
+                            await asyncio.sleep(0.2)
                             continue
 
                         for p in packet:
@@ -161,7 +161,7 @@ class KocomClient:
 
                         if found_match:
                             break
-                        await asyncio.sleep(0.01)
+                        await asyncio.sleep(0.1)
 
                     if not found_match and queue.try_to_retry:
                         _LOGGER.debug("Not received ACK, retrying...")
@@ -186,8 +186,9 @@ class KocomClient:
             return
 
         queue.retries += 1
-        _LOGGER.debug(f"Retrying command (attempt {queue.retries}): {queue.packet.hex()}")
-        await asyncio.sleep(0.1 * (2 ** queue.retries))
+        delay = 0.1 * (2 ** queue.retries)
+        _LOGGER.debug(f"Retrying command (attempt {queue.retries}) after {delay:.2f}s: {queue.packet.hex()}")
+        await asyncio.sleep(delay)
         await self.packet_queue.put(queue)
 
     async def send_packet(self, packet: bytearray | list[tuple[bytearray, float | None]]) -> None:

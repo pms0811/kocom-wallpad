@@ -68,7 +68,7 @@ class RS485Connection:
                 success = await self.connect()
                 if not success:
                     await asyncio.sleep(self.reconnect_interval)
-            await asyncio.sleep(1)
+            await asyncio.sleep(5)
 
     async def send(self, packet: bytearray) -> bool:
         """Send packet to the device."""
