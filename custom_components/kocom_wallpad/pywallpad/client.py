@@ -97,7 +97,7 @@ class KocomClient:
             if self.packets[:2] == HEADER and self.packets[-2:] == TAILER:
                 packets.append(self.packets)
                 self.packets = bytes()
-            elif len(self.packets) > 21:
+            else:
                 self.packets = self.packets[1:]
 
         return packets
