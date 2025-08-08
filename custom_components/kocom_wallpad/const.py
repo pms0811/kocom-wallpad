@@ -2,56 +2,43 @@
 
 from __future__ import annotations
 
-from .pywallpad.packet import (
-    KocomPacket,
-    LightPacket,
-    OutletPacket,
-    ThermostatPacket,
-    ACPacket,
-    VentPacket,
-    IAQPacket,
-    GasPacket,
-    MotionPacket,
-    EVPacket,
-    DoorPhonePacket,
-)
-
 from homeassistant.const import Platform
+from enum import Enum, IntEnum
 import logging
 
 DOMAIN = "kocom_wallpad"
+
 LOGGER = logging.getLogger(__package__)
 
 DEFAULT_PORT = 8899
 
-BRAND_NAME = "Kocom"
-MANUFACTURER = "KOCOM Co., Ltd"
-MODEL = "Smart Wallpad"
-SW_VERSION = "1.1.9"
+class PT2DT(Enum):
+    UNKNOWN = None
+    LIGHT = Platform.LIGHT
+    LIGHTCUTOFF = Platform.LIGHT
+    DIMMINGLIGHT = Platform.LIGHT
+    OUTLET = Platform.SWITCH
+    THERMOSTAT = Platform.CLIMATE
+    AIRCONDITIONER = Platform.CLIMATE
+    VENTILATION = Platform.FAN
+    GASVALVE = Platform.SWITCH
+    ELEVATOR = Platform.SWITCH
+    MOTION = Platform.BINARY_SENSOR
+    AIRQUALITY = Platform.SENSOR
 
-DEVICE_TYPE = "device_type"
-ROOM_ID = "room_id"
-SUB_ID = "sub_id"
+class DT(IntEnum):
+    UNKNOWN = 0
+    LIGHT = 1
+    LIGHTCUTOFF = 2
+    DIMMINGLIGHT = 3
+    OUTLET = 4
+    THERMOSTAT = 5
+    AIRCONDITIONER = 6
+    VENTILATION = 7
+    GASVALVE = 8
+    ELEVATOR = 9
+    MOTION = 10
+    AIRQUALITY = 11
 
-PACKET_DATA = "packet_data"
-LAST_DATA = "last_data"
-
-PLATFORM_MAPPING: dict[type[KocomPacket], Platform] = {
-    LightPacket: Platform.LIGHT,
-    OutletPacket: Platform.SWITCH,
-    ThermostatPacket: Platform.CLIMATE,
-    ACPacket: Platform.CLIMATE,
-    VentPacket: Platform.FAN,
-    IAQPacket: Platform.SENSOR,
-    GasPacket: Platform.SWITCH,
-    MotionPacket: Platform.BINARY_SENSOR,
-    EVPacket: Platform.SWITCH,
-    DoorPhonePacket: Platform.SWITCH,
-}
-
-PLATFORM_PACKET_TYPE: tuple[type[KocomPacket], ...] = (
-    ThermostatPacket,
-    VentPacket,
-    EVPacket,
-    DoorPhonePacket,
-)
+class ST(IntEnum):
+    NONE = 0

@@ -16,11 +16,7 @@ from homeassistant.util.percentage import (
     percentage_to_ordered_list_item,
 )
 
-from .pywallpad.const import POWER, VENT_MODE, FAN_SPEED
-from .pywallpad.packet import KocomPacket, VentPacket
-
 from .gateway import KocomGateway
-from .entity import KocomEntity
 from .const import DOMAIN, LOGGER
 
 
@@ -30,88 +26,42 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Kocom fan platform."""
-    gateway: KocomGateway = hass.data[DOMAIN][entry.entry_id]
-    
-    @callback
-    def async_add_fan(packet: KocomPacket) -> None:
-        """Add new fan entity."""
-        if isinstance(packet, VentPacket):
-            async_add_entities([KocomFanEntity(gateway, packet)])
-    
-    for entity in gateway.get_entities(Platform.FAN):
-        async_add_fan(entity)
-        
-    entry.async_on_unload(
-        async_dispatcher_connect(hass, f"{DOMAIN}_fan_add", async_add_fan)
-    )
 
 
-class KocomFanEntity(KocomEntity, FanEntity):
+class KocomVentilationEntity(FanEntity):
     """Representation of a Kocom fan."""
 
-    _attr_supported_features = (
-        FanEntityFeature.SET_SPEED |
-        FanEntityFeature.TURN_OFF |
-        FanEntityFeature.TURN_ON |
-        FanEntityFeature.PRESET_MODE
-    )
-    _attr_speed_count = 3
-    _attr_preset_modes = [
-        VentPacket.VentMode.VENTILATION.name,
-        VentPacket.VentMode.AUTO.name,
-        VentPacket.VentMode.BYPASS.name,
-        VentPacket.VentMode.NIGHT.name,
-        VentPacket.VentMode.AIR_PURIFIER.name,
-    ]
-    _attr_speed_list = [
-        VentPacket.FanSpeed.LOW.value,
-        VentPacket.FanSpeed.MEDIUM.value,
-        VentPacket.FanSpeed.HIGH.value,
-    ]
-
-    def __init__(
-        self,
-        gateway: KocomGateway,
-        packet: KocomPacket,
-    ) -> None:
+    def __init__(self, gateway: KocomGateway) -> None:
         """Initialize the fan."""
-        super().__init__(gateway, packet)
+        super().__init__(gateway)
 
     @property
     def is_on(self) -> bool:
         """Return the state of the fan."""
-        return self.packet._device.state[POWER]
+        return False
 
     @property
     def percentage(self) -> int:
         """Return the current speed percentage."""
-        fan_speed = self.packet._device.state[FAN_SPEED]
-        if fan_speed == VentPacket.FanSpeed.UNKNOWN:
+        if False:
             return 0
-        return ordered_list_item_to_percentage(self._attr_speed_list, fan_speed.value)
+        return ordered_list_item_to_percentage(self._attr_speed_list, 0)
     
     @property
     def preset_mode(self) -> str:
         """Return the current preset mode."""
-        vent_mode = self.packet._device.state[VENT_MODE]
-        return vent_mode.name
+        return ""
     
     async def async_set_percentage(self, percentage: int) -> None:
         """Set the speed percentage of the fan."""
         if percentage > 0:
             speed_item = percentage_to_ordered_list_item(self._attr_speed_list, percentage)
-            fan_speed = VentPacket.FanSpeed(speed_item)
+            fan_speed = 0
         else:
-            fan_speed = VentPacket.FanSpeed.UNKNOWN
-
-        make_packet = self.packet.make_fan_speed(fan_speed)
-        await self.send_packet(make_packet)
+            fan_speed = 0
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
         """Set the preset mode of the fan."""
-        vent_mode = VentPacket.VentMode[preset_mode]
-        make_packet = self.packet.make_vent_mode(vent_mode)
-        await self.send_packet(make_packet)
 
     async def async_turn_on(
         self,
@@ -121,10 +71,7 @@ class KocomFanEntity(KocomEntity, FanEntity):
         **kwargs: Any,
     ) -> None:
         """Turn on the fan."""
-        make_packet = self.packet.make_power_status(True)
-        await self.send_packet(make_packet)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn off the fan."""
-        make_packet = self.packet.make_power_status(False)
-        await self.send_packet(make_packet)
+        

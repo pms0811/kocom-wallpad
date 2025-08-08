@@ -6,7 +6,6 @@ Home Assistant를 위한 Kocom Wallpad 통합구성요소
 ## 기여
 문제가 있나요? [Issues](https://github.com/lunDreame/kocom-wallpad/issues) 탭에 작성해 주세요.
 
-- 베타 버전입니다.
 - 더 좋은 아이디어가 있나요? [Pull requests](https://github.com/lunDreame/kocom-wallpad/pulls)로 공유해 주세요!
 - 이 통합을 사용하면서 발생하는 문제에 대해서는 책임지지 않습니다.
 

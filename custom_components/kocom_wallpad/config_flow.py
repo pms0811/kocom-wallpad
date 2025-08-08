@@ -12,7 +12,6 @@ from homeassistant.config_entries import (
 )
 import homeassistant.helpers.config_validation as cv
 
-from .connection import test_connection
 from .const import DOMAIN, LOGGER, DEFAULT_PORT
 
 
@@ -32,7 +31,7 @@ class ConfigFlow(ConfigFlow, domain=DOMAIN):
             host = user_input[CONF_HOST]
             port = user_input[CONF_PORT]
 
-            if not await test_connection(host, port):
+            if False:
                 errors["base"] = "cannnot_connect"
             else:
                 await self.async_set_unique_id(host)
