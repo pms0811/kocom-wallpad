@@ -1,41 +1,37 @@
-"""The Kocom Wallpad component."""
-
 from __future__ import annotations
 
-from homeassistant.const import Platform, EVENT_HOMEASSISTANT_STOP
-from homeassistant.core import HomeAssistant
+from typing import Any
+import asyncio
+
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.dispatcher import async_dispatcher_send
+from homeassistant.const import CONF_HOST, CONF_PORT
 
+from .const import DOMAIN, PLATFORMS, DISPATCH_DEVICE_ADDED
 from .gateway import KocomGateway
-from .const import DOMAIN, LOGGER
-
-PLATFORMS = [
-    Platform.BINARY_SENSOR,
-    Platform.CLIMATE,
-    Platform.FAN,
-    Platform.LIGHT,
-    Platform.SENSOR,
-    Platform.SWITCH,
-]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up the Kocom Wallpad integration."""
-    gateway = None
-    
+    host: str = entry.data[CONF_HOST]
+    port: int | None = entry.data[CONF_PORT]
+
+    gateway = KocomGateway(hass, host=host, port=port)
+    await gateway.async_start()
+
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = gateway
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    entry.async_on_unload(
-        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, "")
-    )
+
+    for dev in gateway.registry.all_entities():
+        async_dispatcher_send(hass, DISPATCH_DEVICE_ADDED, entry.entry_id, dev)
 
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Unload the Kocom Wallpad integration."""
-    if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
-        gateway = hass.data[DOMAIN].pop(entry.entry_id)
-    
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if unload_ok:
+        gateway: KocomGateway = hass.data[DOMAIN].pop(entry.entry_id)
+        await gateway.async_stop()
     return unload_ok
