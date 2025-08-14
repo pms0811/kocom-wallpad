@@ -4,7 +4,6 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
-from homeassistant.core import HomeAssistant
 from homeassistant.const import CONF_HOST, CONF_PORT
 
 from .const import DOMAIN, DEFAULT_TCP_PORT
@@ -20,7 +19,7 @@ class KocomConfigFlow(ConfigFlow, domain=DOMAIN):
         
         if user_input is not None:
             host: str = user_input[CONF_HOST]
-            port: int | None = user_input[CONF_PORT]
+            port: int = user_input[CONF_PORT]
 
             # 시리얼의 경우 host가 "/"로 시작하면 장치 경로로 간주하고 port 무시
             if host.startswith("/"):
@@ -36,7 +35,7 @@ class KocomConfigFlow(ConfigFlow, domain=DOMAIN):
 
         schema = vol.Schema({
             vol.Required(CONF_HOST): str,
-            vol.Optional(CONF_PORT, default=DEFAULT_TCP_PORT): int,
+            vol.Required(CONF_PORT, default=DEFAULT_TCP_PORT): int,
         })
         return self.async_show_form(
             step_id="user", data_schema=schema, errors=errors

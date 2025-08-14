@@ -1,113 +1,88 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
-import os
+from typing import Optional, Tuple
+import asyncio
+import serial_asyncio
+import socket
 import time
 
-import socket, select
-try:
-    import serial  # type: ignore
-except Exception:  # pragma: no cover
-    serial = None  # type: ignore
+from .const import LOGGER
 
 
 @dataclass
-class SyncConnectionWrapper:
+class AsyncConnection:
     host: str
-    port: Optional[int] = None  # None이면 시리얼
+    port: Optional[int]
     serial_baud: int = 9600
-
+    connect_timeout: float = 5.0
+    keepalive: bool = True
+    reconnect_backoff: Tuple[float, float] = (1.0, 30.0)  # min, max seconds
+    
     def __post_init__(self) -> None:
-        self._sock: Optional[socket.socket] = None
-        self._ser = None
+        self._reader: Optional[asyncio.StreamReader] = None
+        self._writer: Optional[asyncio.StreamWriter] = None
         self._last_activity_mono: float = time.monotonic()
 
-    # public
-    def open(self) -> None:
-        if self.host.startswith("/"):
-            if serial is None:
-                raise RuntimeError("pyserial required for serial port")
-            self._ser = serial.Serial(self.host, self.serial_baud, timeout=0, write_timeout=0)
-            self._sock = None
+    async def open(self) -> None:
+        if self.port is None:
+            self._reader, self._writer = await serial_asyncio.open_serial_connection(
+                url=self.host, baudrate=self.serial_baud
+            )
         else:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.setblocking(False)
-            try:
-                try:
-                    s.connect((self.host, self.port or 8899))
-                except (BlockingIOError, InterruptedError):
-                    pass
-                _, w, e = select.select([], [s], [s], 5.0)
-                if s in e or not w:
-                    s.close()
-                    raise TimeoutError("connect timeout")
-                if s.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR) != 0:
-                    s.close()
-                    raise OSError("connect failed")
-                self._sock = s
-                self._ser = None
-            except Exception:
-                s.close()
-                raise
-        self._last_activity_mono = time.monotonic()
+            self._reader, self._writer = await asyncio.wait_for(
+                asyncio.open_connection(self.host, self.port),
+                timeout=self.connect_timeout,
+            )
+            if self.keepalive:
+                sock = self._writer.get_extra_info("socket")
+                if sock:
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        self._touch()
 
-    def close(self) -> None:
-        if self._sock is not None:
+    async def close(self) -> None:
+        if self._writer is not None:
+            self._writer.close()
             try:
-                self._sock.close()
+                await self._writer.wait_closed()
+            except Exception:
+                pass
             finally:
-                self._sock = None
-        if self._ser is not None:
-            try:
-                self._ser.close()
-            finally:
-                self._ser = None
+                self._writer = None
+        self._reader = None
+
+    def _touch(self) -> None:
+        self._last_activity_mono = time.monotonic()
 
     def idle_since(self) -> float:
         return max(0.0, time.monotonic() - self._last_activity_mono)
 
-    def send(self, data: bytes, timeout: float = 1.0) -> int:
-        if self._sock is not None:
-            total = 0
-            end = time.monotonic() + timeout
-            while total < len(data):
-                tleft = max(0.0, end - time.monotonic())
-                if tleft == 0.0:
-                    raise TimeoutError("send timeout")
-                _, w, _ = select.select([], [self._sock], [], tleft)
-                if not w:
-                    continue
-                n = self._sock.send(data[total:])
-                if n == 0:
-                    raise OSError("socket closed")
-                total += n
-                self._last_activity_mono = time.monotonic()
-            return total
-        elif self._ser is not None:
-            n = self._ser.write(data)
-            self._last_activity_mono = time.monotonic()
-            return int(n or 0)
-        else:
-            raise RuntimeError("not open")
+    async def send(self, data: bytes) -> int:
+        if not self._writer:
+            raise RuntimeError("connection not open")
+        self._writer.write(data)
+        await self._writer.drain()
+        self._touch()
+        return len(data)
 
-    def recv(self, nbytes: int, timeout: float = 0.05) -> bytes:
-        if self._sock is not None:
-            r, _, _ = select.select([self._sock], [], [], timeout)
-            if not r:
-                return b""
-            data = self._sock.recv(nbytes)
-            if data:
-                self._last_activity_mono = time.monotonic()
-            return data
-        elif self._ser is not None:
-            if self._ser.in_waiting <= 0:
-                r, _, _ = select.select([self._ser.fileno()], [], [], timeout)
-                if not r:
-                    return b""
-            data = self._ser.read(nbytes)
-            if data:
-                self._last_activity_mono = time.monotonic()
-            return data
-        else:
-            raise RuntimeError("not open")
+    async def recv(self, nbytes: int, timeout: float = 0.05) -> bytes:
+        if not self._reader:
+            raise RuntimeError("connection not open")
+        try:
+            chunk = await asyncio.wait_for(self._reader.read(nbytes), timeout=timeout)
+        except asyncio.TimeoutError:
+            return b""
+        if chunk:
+            self._touch()
+        return chunk
+
+    async def auto_reconnect(self, open_coro) -> None:
+        delay = self.reconnect_backoff[0]
+        while True:
+            try:
+                await open_coro()
+                return
+            except Exception as e:
+                LOGGER.warning("Connection failed: %s, retrying in %.1fs", e, delay)
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, self.reconnect_backoff[1])

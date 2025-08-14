@@ -1,34 +1,47 @@
 from __future__ import annotations
 
-from typing import Any
-
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.entity import Entity, DeviceInfo
+from homeassistant.core import callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
-from homeassistant.helpers.entity import Entity
 
-from .const import DISPATCH_DEVICE_UPDATED
-from .gateway import DeviceKey, DeviceState
-from .helpers import KocomEntityInfo
+from .gateway import KocomGateway, DeviceState
+from .const import DOMAIN
 
 
-class KocomEntity(Entity):
+class KocomBaseEntity(Entity):
     _attr_has_entity_name = True
+    _attr_available = True
 
-    def __init__(self, hass: HomeAssistant, info: KocomEntityInfo) -> None:
+    def __init__(self, gateway: KocomGateway, device: DeviceState) -> None:
         super().__init__()
-        self.hass = hass
-        self._info = info
-        self._attr_unique_id = info.unique_id
-        self._attr_device_info = info.device_info()
+        self.gateway = gateway
+        self._device = device
+        self._attr_unique_id = device.key.unique_id
+        self._attr_name = device.key.name
+        self.entity_description = ""
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"")},
+            manufacturer="",
+            model=f"",
+            name=f"",
+        )
+        self._state_cache = dict(device.attributes)
 
-    async def async_added_to_hass(self) -> None:
+    async def async_added_to_hass(self):
         self.async_on_remove(
             async_dispatcher_connect(
-                self.hass, DISPATCH_DEVICE_UPDATED, self._handle_device_update
+                self.hass,
+                f"{DOMAIN}_state_update_{self._attr_unique_id}",
+                self._handle_state_update
             )
         )
+        
+    async def async_will_remove_from_hass(self) -> None:
+        pass
 
     @callback
-    def _handle_device_update(self, entry_id: str, dev: DeviceState) -> None:
-        # 하위 클래스에서 key 비교 후 상태 동기화
-        pass
+    def update_from_state(self, new_state: DeviceState) -> bool:
+        if new_state.attributes != self._state_cache:
+            self._state_cache = dict(new_state.attributes)
+            self._device = new_state
+            self.async_write_ha_state()

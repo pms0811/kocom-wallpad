@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from enum import IntEnum, Enum
+from enum import IntEnum
 from homeassistant.const import Platform
 
 LOGGER = logging.getLogger(__name__)
@@ -48,3 +48,5 @@ class DeviceType(IntEnum):
 
 class SubType(IntEnum):
     NONE = 0
+    DIRECTION = 1
+    FLOOR = 2

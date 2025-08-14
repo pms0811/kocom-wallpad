@@ -1,17 +1,15 @@
 from __future__ import annotations
 
-from typing import Callable, Dict, List, Optional
+from typing import List
 from dataclasses import dataclass
 
-from homeassistant.helpers.dispatcher import async_dispatcher_send
+from homeassistant.const import Platform
 
 from .const import (
     LOGGER,
     PACKET_PREFIX,
     PACKET_SUFFIX,
     PACKET_LEN,
-    DISPATCH_DEVICE_ADDED,
-    DISPATCH_DEVICE_UPDATED,
     DeviceType,
     SubType,
 )
@@ -67,7 +65,7 @@ class PacketStruct:
             0x44: DeviceType.ELEVATOR
         }
         if dev_type := code_map.get(self.peer[0], DeviceType.UNKNOWN):
-            LOGGER.warning("Unknown device type: %s, raw: %s", hex(self.peer[0]), self.raw.hex())
+            LOGGER.debug("Unknown device type: %s, raw: %s", hex(self.peer[0]), self.raw.hex())
         return dev_type
     
     @property
@@ -123,53 +121,133 @@ class KocomController:
         
         handler = None
         if ps.dev_type == DeviceType.LIGHT:
-            handler = self._handle_light(ps)
+            handler = self._handle_switch(ps)
         elif ps.dev_type == DeviceType.OUTLET:
-            handler = self._handle_outlet(ps)
+            handler = self._handle_switch(ps)
         elif ps.dev_type == DeviceType.THERMOSTAT:
             handler = self._handle_thermostat(ps)
         elif ps.dev_type == DeviceType.VENTILATION:
             handler = self._handle_ventilation(ps)
+        elif ps.dev_type == DeviceType.GASVALVE:
+            handler = self._handle_gasvalve(ps)
         elif ps.dev_type == DeviceType.ELEVATOR:
             handler = self._handle_elevator(ps)
+        else:
+            LOGGER.debug("No handler is defined for the device type: %s", ps.dev_type)
             
-        if handler is not None:
-            if self.gateway.registry.get(handler.key) is None:
-                async_dispatcher_send(self.gateway.hass, DISPATCH_DEVICE_ADDED, self.gateway.entry_id, handler)
-            if self.gateway.registry.upsert(handler):
-                async_dispatcher_send(self.gateway.hass, DISPATCH_DEVICE_UPDATED, self.gateway.entry_id, handler)
+        if handler:
+            for state in handler:
+                self.gateway.on_device_state(state)
 
-    def _handle_light(self, ps: PacketStruct) -> DeviceState:
-        pass
+    def _handle_switch(self, ps: PacketStruct) -> List[DeviceState]:
+        states: List[DeviceState] = []
+        if ps.command == 0x00:
+            for idx in range(8):
+                key = DeviceKey(
+                    device_type=ps.dev_type,
+                    room_index=ps.dev_room,
+                    device_index=idx,
+                    sub_type=SubType.NONE,
+                )
+                plat = Platform.LIGHT if ps.dev_type == DeviceType.LIGHT else Platform.SWITCH
+                attrib = {"state": ps.payload[idx]}
+                dev = DeviceState(key=key, platform=plat, attributes=attrib)
+                states.append(dev)
+        return states
 
-    def _handle_outlet(self, ps: PacketStruct) -> DeviceState:
-        pass
-    
-    def _handle_thermostat(self, ps: PacketStruct) -> DeviceState:
-        pass
-    
-    def _handle_ventilation(self, ps: PacketStruct) -> DeviceState:
-        pass
-    
-    def _handle_elevator(self, ps: PacketStruct) -> DeviceState:
-        pass
-
-    def _default_handle(self, ps: PacketStruct) -> None:
-        try:
-            platform = None
-        except Exception:
-            platform = None
-        if platform is None:
-            return
+    def _handle_thermostat(self, ps: PacketStruct) -> List[DeviceState]:
+        states: List[DeviceState] = []
+        if ps.command == 0x00:
+            key = DeviceKey(
+                device_type=ps.dev_type,
+                room_index=ps.dev_room,
+                device_index=0,
+                sub_type=SubType.NONE,
+            )
+            attrib = {
+                "state": ps.payload[0] >> 4 == 0x01,
+                "away": ps.payload[1] & 0x0F == 0x01,
+                "target_temp": ps.payload[2],
+                "current_temp": ps.payload[4],
+            }
+            dev = DeviceState(key=key, platform=Platform.CLIMATE, attributes=attrib)
+            states.append(dev)
+        return states
+      
+    def _handle_ventilation(self, ps: PacketStruct) -> List[DeviceState]:
+        states: List[DeviceState] = []
+        if ps.command == 0x00:
+            key = DeviceKey(
+                device_type=ps.dev_type,
+                room_index=ps.dev_room,
+                device_index=0,
+                sub_type=SubType.NONE,
+            )
+            preset = {
+                
+            }
+            attrib = {
+                "state": ps.payload[0] >> 4 == 0x01,
+                "preset": ps.payload[1],
+                "speed": ps.payload[2],
+            }
+            dev = DeviceState(key=key, platform=Platform.FAN, attributes=attrib)
+            states.append(dev)
+        return states
+            
+    def _handle_gasvalve(self, ps: PacketStruct) -> List[DeviceState]:
+        states: List[DeviceState] = []
+        if ps.command in {0x01, 0x02}:
+            key = DeviceKey(
+                device_type=ps.dev_type,
+                room_index=ps.dev_room,
+                device_index=0,
+                sub_type=SubType.NONE,
+            )
+            attrib = {"state": ps.command == 0x01}
+            dev = DeviceState(key=key, platform=Platform.SWITCH, attributes=attrib)
+            states.append(dev)
+        return states
+            
+    def _handle_elevator(self, ps: PacketStruct) -> List[DeviceState]:    
+        states: List[DeviceState] = []
         key = DeviceKey(
             device_type=ps.dev_type,
             room_index=ps.dev_room,
             device_index=0,
             sub_type=SubType.NONE,
         )
-        attrib = {"state": False}
-        dev = DeviceState(key=key, platform=platform, attributes=attrib)
+        state = False
+        if ps.payload[0] == 0x03:
+            state = False
+        elif ps.payload[0] in {0x01, 0x02} or ps.packet_type == 0x0D:
+            state = True
+        attrib = {"state": state}
+        dev = DeviceState(key=key, platform=Platform.SWITCH, attributes=attrib)
+        
+        key = DeviceKey(
+            device_type=ps.dev_type,
+            room_index=ps.dev_room,
+            device_index=0,
+            sub_type=SubType.DIRECTION,
+        )
+        state = {
+            0x00: "idle",
+            0x01: "down",
+            0x02: "up",
+            0x03: "arrive"
+        }
+        attrib = {"state": "move" if ps.packet_type == 0x0D else state.get(ps.payload[0], "unknown")}
+        dev = DeviceState(key=key, platform=Platform.SENSOR, attributes=attrib)
+        
+        states.append(dev)
+        return states
 
-        if self.gateway.registry.upsert(dev):
-            async_dispatcher_send(self.gateway.hass, DISPATCH_DEVICE_ADDED, self.gateway.entry_id, dev)
-            async_dispatcher_send(self.gateway.hass, DISPATCH_DEVICE_UPDATED, self.gateway.entry_id, dev)
+    def generate_command(self, key: DeviceKey, action: str, **kwargs) -> bytes:
+        dt = key.device_type
+        room = key.room_index
+        idx = key.device_index
+        sub = key.sub_type
+        
+        return bytes()
+    
