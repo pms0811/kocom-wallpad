@@ -113,6 +113,7 @@ class KocomGateway:
         self.controller = KocomController(self)
         self.registry = EntityRegistry()
         self._task_reader: asyncio.Task | None = None
+        self._task_reconnect: asyncio.Task | None = None
         self._send_lock = asyncio.Lock()
         self._pendings: list[_PendingWaiter] = []
         self._last_rx_monotonic: float = 0.0
@@ -126,6 +127,7 @@ class KocomGateway:
         self._last_rx_monotonic = self.conn.idle_since()
         self._last_tx_monotonic = self.conn.idle_since()
         self._task_reader = asyncio.create_task(self._read_loop())
+        self._task_reconnect = asyncio.create_task(self.conn.auto_reconnect())
 
     async def async_stop(self, event: Event | None = None) -> None:
         LOGGER.info("Stopping gateway - %s:%s", self.host, self.port or "")
@@ -133,6 +135,10 @@ class KocomGateway:
             self._task_reader.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._task_reader
+        if self._task_reconnect:
+            self._task_reconnect.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._task_reconnect
         await self.conn.close()
 
     def is_idle(self) -> bool:
