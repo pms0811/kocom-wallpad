@@ -1,3 +1,5 @@
+"""Config flow for Kocom Wallpad."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -10,13 +12,16 @@ from .const import DOMAIN, DEFAULT_TCP_PORT
 
 
 class KocomConfigFlow(ConfigFlow, domain=DOMAIN):
+    """Config flow for Kocom Wallpad."""
+
     VERSION = 1
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        """Handle a flow initialized by the user."""
         errors: dict[str, str] = {}
-        
+
         if user_input is not None:
             host: str = user_input[CONF_HOST]
             port: int = user_input[CONF_PORT]

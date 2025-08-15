@@ -1,3 +1,5 @@
+"""Constants for Kocom Wallpad."""
+
 from __future__ import annotations
 
 import logging
@@ -10,15 +12,11 @@ DOMAIN = "kocom_wallpad"
 PLATFORMS = [
     Platform.LIGHT,
     Platform.SWITCH,
-    Platform.CLIMATE,
-    Platform.FAN,
-    Platform.BINARY_SENSOR,
-    Platform.SENSOR,
+    #Platform.CLIMATE,
+    #Platform.FAN,
+    #Platform.BINARY_SENSOR,
+    #Platform.SENSOR,
 ]
-
-DISPATCH_DEVICE_ADDED = f"{DOMAIN}_device_added"
-DISPATCH_DEVICE_UPDATED = f"{DOMAIN}_device_updated"
-DISPATCH_DEVICE_REMOVED = f"{DOMAIN}_device_removed"
 
 PACKET_PREFIX = bytes([0xAA, 0x55])
 PACKET_SUFFIX = bytes([0x0D, 0x0D])
@@ -29,9 +27,10 @@ RECV_POLL_SEC = 0.05  # 50ms polling
 IDLE_GAP_SEC = 0.20   # 보내기 전 라인 유휴로 보고 싶은 최소 간격
 SEND_RETRY_MAX = 3
 SEND_RETRY_GAP = 0.15
-
+CMD_CONFIRM_TIMEOUT = 1.0  # 보낸 뒤 상태 확인을 기다리는 최대 시간
 
 class DeviceType(IntEnum):
+    """Device types."""
     UNKNOWN = 0
     LIGHT = 1
     LIGHTCUTOFF = 2
@@ -47,6 +46,7 @@ class DeviceType(IntEnum):
 
 
 class SubType(IntEnum):
+    """Sub types."""
     NONE = 0
     DIRECTION = 1
     FLOOR = 2

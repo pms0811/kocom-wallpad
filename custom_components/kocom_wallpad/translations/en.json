@@ -19,5 +19,29 @@
         "error": {
             "cannot_connect": "Failed to connect."
         }
+    },
+    "entity": {
+        "light": {
+            "light": {
+                "name": "Light {id}"
+            },
+            "dimminglight": {
+                "name": "Dimming Light {id}"
+            },
+            "lightcutoff": {
+                "name": "Light Cut-off"
+            }
+        },
+        "switch": {
+            "outlet": {
+                "name": "Outlet {id}"
+            },
+            "gasvalve": {
+                "name": "Gas Valve {id}"
+            },
+            "elevator": {
+                "name": "Elevator {id}"
+            }
+        }
     }
 }

@@ -1,3 +1,5 @@
+"""Transport for Kocom Wallpad."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -12,14 +14,16 @@ from .const import LOGGER
 
 @dataclass
 class AsyncConnection:
+    """Async Connection."""
     host: str
     port: Optional[int]
     serial_baud: int = 9600
     connect_timeout: float = 5.0
     keepalive: bool = True
     reconnect_backoff: Tuple[float, float] = (1.0, 30.0)  # min, max seconds
-    
+
     def __post_init__(self) -> None:
+        """Initialize the connection."""
         self._reader: Optional[asyncio.StreamReader] = None
         self._writer: Optional[asyncio.StreamWriter] = None
         self._last_activity_mono: float = time.monotonic()
@@ -29,11 +33,13 @@ class AsyncConnection:
             self._reader, self._writer = await serial_asyncio.open_serial_connection(
                 url=self.host, baudrate=self.serial_baud
             )
+            LOGGER.info("Connection opened for serial: %s", self.host)
         else:
             self._reader, self._writer = await asyncio.wait_for(
                 asyncio.open_connection(self.host, self.port),
                 timeout=self.connect_timeout,
             )
+            LOGGER.info("Connection opened for socket: %s:%s", self.host, self.port)
             if self.keepalive:
                 sock = self._writer.get_extra_info("socket")
                 if sock:
@@ -42,6 +48,7 @@ class AsyncConnection:
 
     async def close(self) -> None:
         if self._writer is not None:
+            LOGGER.info("Closing connection")
             self._writer.close()
             try:
                 await self._writer.wait_closed()
@@ -60,6 +67,7 @@ class AsyncConnection:
     async def send(self, data: bytes) -> int:
         if not self._writer:
             raise RuntimeError("connection not open")
+        LOGGER.debug("Sending: %s", data.hex())
         self._writer.write(data)
         await self._writer.drain()
         self._touch()
