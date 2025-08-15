@@ -21,7 +21,7 @@ class KocomBaseEntity(RestoreEntity):
         self._device = device
         self._unsubs: list[callable] = []
 
-        self._attr_unique_id = device.key.unique_id
+        self._attr_unique_id = f"{device.key.unique_id}:{self.gateway.host}"
         self.entity_description = EntityDescription(
             key=device.key.device_type.name.lower(),
             has_entity_name=True,
