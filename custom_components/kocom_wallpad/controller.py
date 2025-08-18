@@ -33,6 +33,7 @@ from .models import (
 Predicate = Callable[[DeviceState], bool]
 
 REV_DT_MAP = {v: k for k, v in DEVICE_TYPE_MAP.items()}
+REV_VENT_PRESET_MAP = {v: k for k, v in VENTILATION_PRESET_MAP.items()}
 
 
 @dataclass(slots=True, frozen=True)
@@ -94,6 +95,7 @@ class KocomController:
         """Initialize the controller."""
         self.gateway = gateway
         self._rx_buf = bytearray()
+        self._device_storage: dict[str, Any] = {}
 
     @staticmethod
     def _checksum(buf: bytes) -> int:
@@ -137,7 +139,7 @@ class KocomController:
             LOGGER.debug("Packet checksum is invalid. raw=%s", frame.raw.hex())
             return
 
-        dev_state: List[DeviceState] = []
+        dev_state = None
         if frame.dev_type == DeviceType.LIGHT:
             dev_state = self._handle_switch(frame)
         elif frame.dev_type == DeviceType.OUTLET:
@@ -151,12 +153,19 @@ class KocomController:
         elif frame.dev_type == DeviceType.ELEVATOR:
             dev_state = self._handle_elevator(frame)
         else:
-            LOGGER.debug("Unhandled device type: %s (raw=%s)", frame.dev_type, frame.raw.hex())
+            LOGGER.debug("Unhandled device type: %s (raw=%s)", frame.dev_type.name, frame.raw.hex())
             return
 
-        for state in dev_state:
-            state._store_packet = packet.hex()
-            self.gateway.on_device_state(state)
+        if not dev_state:
+            return
+
+        if isinstance(dev_state, list):
+            for state in dev_state:
+                state._packet = packet
+                self.gateway.on_device_state(state)
+        else:
+            dev_state._packet = packet
+            self.gateway.on_device_state(dev_state)
 
     def _handle_switch(self, frame: PacketFrame) -> List[DeviceState]:
         states: List[DeviceState] = []
@@ -168,22 +177,20 @@ class KocomController:
                     device_index=idx,
                     sub_type=SubType.NONE,
                 )
-                platform = Platform.LIGHT if frame.dev_type == DeviceType.LIGHT else Platform.SWITCH
+                platform = Platform.LIGHT if frame.dev_type == DeviceType.LIGHT else Platform.SWITCH      
+                attribute = {}
                 if platform == Platform.SWITCH:
                     attribute = {"device_class": SwitchDeviceClass.OUTLET}
-                else:
-                    attribute = None
-                state = frame.payload[idx] == 0xFF
+                state = frame.payload[idx] == 0xFF        
                 dev = DeviceState(key=key, platform=platform, attribute=attribute, state=state)
-                if state is True:
-                    dev._should_register = True
+                if state:
+                    dev._is_register = True
                 else:
-                    dev._should_register = False
+                    dev._is_register = False
                 states.append(dev)
-        return states
+            return states
 
-    def _handle_thermostat(self, frame: PacketFrame) -> List[DeviceState]:
-        states: List[DeviceState] = []
+    def _handle_thermostat(self, frame: PacketFrame) -> DeviceState:
         if frame.command == 0x00:
             key = DeviceKey(
                 device_type=frame.dev_type,
@@ -191,26 +198,33 @@ class KocomController:
                 device_index=0,
                 sub_type=SubType.NONE,
             )
+            havc_mode = HVACMode.HEAT if frame.payload[0] >> 4 == 0x01 else HVACMode.OFF
+            preset_mode = PRESET_AWAY if frame.payload[1] & 0x0F == 0x01 else PRESET_NONE
+            target_temp = float(frame.payload[2])
+            current_temp = float(frame.payload[4])
+
             attribute = {
                 "hvac_modes": [HVACMode.HEAT, HVACMode.OFF],
                 "feature_preset": True,
                 "preset_modes": [PRESET_AWAY, PRESET_NONE],
-                "temp_step": 1,
+                "temp_step": self._device_storage.get("temp_step", 1.0),
             }
             state = {
-                "hvac_mode": HVACMode.HEAT if frame.payload[0] >> 4 == 0x01 else HVACMode.OFF,
-                "preset_mode": PRESET_AWAY if frame.payload[1] & 0x0F == 0x01 else PRESET_NONE,
-                "target_temp": float(frame.payload[2]),
-                "current_temp": float(frame.payload[4]),
+                "hvac_mode": havc_mode,
+                "preset_mode": preset_mode,
+                "target_temp": self._device_storage.get("target_temp", target_temp),
+                "current_temp": self._device_storage.get("current_temp", current_temp),
             }
-            if state["target_temp"] % 1 == 0.5:
-                attribute["temp_step"] = 0.5
+            if target_temp % 1 == 0.5 and self._device_storage.get("temp_step") != 0.5:
+                LOGGER.debug("0.5°C step detected, heating supports 0.5 increments.")
+                self._device_storage["temp_step"] = 0.5
+            if target_temp != 0 and current_temp != 0:
+                self._device_storage["target_temp"] = target_temp
+                self._device_storage["current_temp"] = current_temp
             dev = DeviceState(key=key, platform=Platform.CLIMATE, attribute=attribute, state=state)
-            states.append(dev)
-        return states
+            return dev
 
-    def _handle_ventilation(self, frame: PacketFrame) -> List[DeviceState]:
-        states: List[DeviceState] = []
+    def _handle_ventilation(self, frame: PacketFrame) -> DeviceState:
         if frame.command == 0x00:
             key = DeviceKey(
                 device_type=frame.dev_type,
@@ -218,26 +232,32 @@ class KocomController:
                 device_index=0,
                 sub_type=SubType.NONE,
             )
+            state = frame.payload[0] >> 4 == 0x01
+            preset_mode = VENTILATION_PRESET_MAP.get(frame.payload[1], "unknown")
+            speed = frame.payload[2]
+            
             attribute = {
-                "feature_preset": False,
-                "preset_modes": [],
+                "feature_preset": self._device_storage.get("feature_preset", False),
+                "preset_modes": self._device_storage.get("preset_modes", []),
                 "speed_list": [0x40, 0x80, 0xC0]
             }
             state = {
-                "state": frame.payload[0] >> 4 == 0x01,
-                "preset_mode": VENTILATION_PRESET_MAP.get(frame.payload[1], "unknown"),
-                "speed": frame.payload[2],
+                "state": state,
+                "preset_mode": preset_mode,
+                "speed": speed,
             }
-            if state["preset_mode"] != "unknown" and state["preset_mode"] != "ventilation":
-                attribute["feature_preset"] = True
-                if state["preset_mode"] not in attribute["preset_modes"]:
-                    attribute["preset_modes"].append(state["preset_mode"])
+            if preset_mode != "unknown" and preset_mode != "ventilation":
+                if self._device_storage.get("preset_modes") is None:
+                    LOGGER.debug("New ventilation preset detected (excluding default).")
+                    self._device_storage["feature_preset"] = True
+                    self._device_storage["preset_modes"] = ["ventilation"]
+                if preset_mode not in self._device_storage["preset_modes"]:
+                    LOGGER.debug(f"Added presets: {preset_mode}")
+                    self._device_storage["preset_modes"].append(preset_mode)
             dev = DeviceState(key=key, platform=Platform.FAN, attribute=attribute, state=state)
-            states.append(dev)
-        return states
+            return dev
 
-    def _handle_gasvalve(self, frame: PacketFrame) -> List[DeviceState]:
-        states: List[DeviceState] = []
+    def _handle_gasvalve(self, frame: PacketFrame) -> DeviceState:
         if frame.command in (0x01, 0x02):
             key = DeviceKey(
                 device_type=frame.dev_type,
@@ -246,9 +266,8 @@ class KocomController:
                 sub_type=SubType.NONE,
             )
             state = frame.command == 0x01
-            dev = DeviceState(key=key, platform=Platform.SWITCH, attribute=None, state=state)
-            states.append(dev)
-        return states
+            dev = DeviceState(key=key, platform=Platform.SWITCH, attribute={}, state=state)
+            return dev
 
     def _handle_elevator(self, frame: PacketFrame) -> List[DeviceState]:    
         states: List[DeviceState] = []
@@ -263,7 +282,7 @@ class KocomController:
             state = False
         elif frame.payload[0] in (0x01, 0x02) or frame.packet_type == 0x0D:
             state = True
-        dev = DeviceState(key=key, platform=Platform.SWITCH, attribute=None, state=state)
+        dev = DeviceState(key=key, platform=Platform.SWITCH, attribute={}, state=state)
         states.append(dev)
 
         key = DeviceKey(
@@ -273,14 +292,37 @@ class KocomController:
             sub_type=SubType.DIRECTION,
         )
         state = ""
-        if frame.packet_type == 0x0D:
+        if frame.payload[0] == 0x00 and frame.packet_type == 0x0D:
             state = "called"
         else:
             state = ELEVATOR_DIRECTION_MAP.get(frame.payload[0], "unknown")
-        dev = DeviceState(key=key, platform=Platform.SENSOR, attribute=None, state=state)
+        dev = DeviceState(key=key, platform=Platform.SENSOR, attribute={}, state=state)
         states.append(dev)
+        
+        key = DeviceKey(
+            device_type=frame.dev_type,
+            room_index=frame.dev_room,
+            device_index=0,
+            sub_type=SubType.FLOOR,
+        )
+        state = ""
+        if frame.payload[1] == 0x00:
+            state = "unknown"
+        else:
+            if frame.payload[2] != 0x00:
+                state = f"{chr(frame.payload[1])}{chr(frame.payload[2])}"
+            else:
+                if frame.payload[1] >> 4 == 0x08:
+                    state = f"B{str(frame.payload[1] & 0x0F)}"
+                else:
+                    state = str(frame.payload[1])
+        dev = DeviceState(key=key, platform=Platform.SENSOR, attribute={}, state=state)
+        # Except for wallpad that do not support floor
+        if dev.state != "":
+            states.append(dev)
         return states
-
+    
+    # TODO: 명령 상태 비교 로직 통합 (gateway.py)
     def _match_key_and(self, key: DeviceKey, cond: Predicate) -> Predicate:
         def _inner(dev: DeviceState) -> bool:
             if dev.key.key != key.key:
@@ -331,6 +373,9 @@ class KocomController:
         if action == "set_hvac":
             hm = kwargs["hvac_mode"]
             return self._match_key_and(key, lambda d: isinstance(d.state, dict) and d.state.get("hvac_mode") == hm), CMD_CONFIRM_TIMEOUT
+        if action == "set_preset":
+            pm = kwargs["preset_mode"]
+            return self._match_key_and(key, lambda d: isinstance(d.state, dict) and d.state.get("preset_mode") == pm), CMD_CONFIRM_TIMEOUT
         if action == "set_temperature":
             tt = kwargs["target_temp"]
             return self._match_key_and(key, lambda d: isinstance(d.state, dict) and d.state.get("target_temp") == tt), CMD_CONFIRM_TIMEOUT
@@ -373,9 +418,9 @@ class KocomController:
         if device_type in (DeviceType.LIGHT, DeviceType.OUTLET):
             data = self._generate_switch(key, action, data)
         elif device_type == DeviceType.VENTILATION:
-            data = self._generate_ventilation()
+            data = self._generate_ventilation(action, data, **kwargs)
         elif device_type == DeviceType.THERMOSTAT:
-            data = self._generate_thermostat()
+            data = self._generate_thermostat(action, data, **kwargs)
         elif device_type == DeviceType.GASVALVE:
             command = bytes([0x02])
         elif device_type == DeviceType.ELEVATOR:
@@ -386,9 +431,6 @@ class KocomController:
             command = bytes([0x01])
         else:
             raise ValueError(f"Invalid device generator: {device_type}")
-
-        if data is None:
-            raise ValueError(f"Internally, {device_type} device generator encountered a problem.")
 
         body = b"".join([type_bytes, padding, dest_dev, dest_room, src_dev, src_room, command, bytes(data)])
         checksum = bytes([self._checksum(body)])
@@ -408,8 +450,29 @@ class KocomController:
                 data[idx] = 0xFF if action == "turn_on" else 0x00
         return data
 
-    def _generate_ventilation(self) -> bytes:
-        pass
-
-    def _generate_thermostat(self) -> bytes:
-        pass
+    def _generate_ventilation(self, action: str, data: bytes, **kwargs: Any) -> bytes:
+        if action == "set_preset":
+            pm = kwargs["preset_mode"]
+            data[0] = 0x11
+            data[1] = REV_VENT_PRESET_MAP[pm]
+        elif action == "set_percentage":
+            speed = kwargs["speed"]
+            data[0] = 0x00 if speed == 0 else 0x11
+            data[2] = speed
+        else:
+            data[0] = 0x11 if action == "turn_on" else 0x00
+        return data
+    
+    def _generate_thermostat(self, action: str, data: bytes, **kwargs: Any) -> bytes:
+        if action == "set_hvac":
+            hm = kwargs["hvac_mode"]
+            data[0] = 0x11 if hm == HVACMode.HEAT else 0x01
+            data[1] = 0x00
+        elif action == "set_preset":
+            pm = kwargs["preset_mode"]
+            data[0] = 0x11
+            data[1] = 0x01 if pm == PRESET_AWAY else 0x00
+        elif action == "set_temperature":
+            tt = kwargs["target_temp"]
+            data[2] = int(tt)
+        return data

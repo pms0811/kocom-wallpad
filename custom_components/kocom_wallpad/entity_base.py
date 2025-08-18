@@ -5,10 +5,26 @@ from __future__ import annotations
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.restore_state import RestoreEntity, RestoredExtraData
 from homeassistant.core import callback
+from homeassistant.const import Platform
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
-from homeassistant.helpers.entity import EntityDescription
+from homeassistant.components.light import LightEntityDescription
+from homeassistant.components.switch import SwitchEntityDescription
+from homeassistant.components.climate import ClimateEntityDescription
+from homeassistant.components.fan import FanEntityDescription
+from homeassistant.components.sensor import SensorEntityDescription
+from homeassistant.components.binary_sensor import BinarySensorEntityDescription
 
 from .const import DOMAIN, DeviceType, SubType
+
+
+ENTITY_DESCRIPTION_MAP = {
+    Platform.LIGHT: LightEntityDescription,
+    Platform.SWITCH: SwitchEntityDescription,
+    Platform.CLIMATE: ClimateEntityDescription,
+    Platform.FAN: FanEntityDescription,
+    Platform.SENSOR: SensorEntityDescription,
+    Platform.BINARY_SENSOR: BinarySensorEntityDescription
+}
 
 
 class KocomBaseEntity(RestoreEntity):
@@ -22,10 +38,10 @@ class KocomBaseEntity(RestoreEntity):
         self._unsubs: list[callable] = []
 
         self._attr_unique_id = f"{device.key.unique_id}:{self.gateway.host}"
-        self.entity_description = EntityDescription(
-            key=device.key.device_type.name.lower(),
+        self.entity_description = ENTITY_DESCRIPTION_MAP[self._device.platform](
+            key=self.format_key,
             has_entity_name=True,
-            translation_key=device.key.device_type.name.lower(),
+            translation_key=self.format_key,
             translation_placeholders={"id": self.format_translation_placeholders}
         )
         self._attr_device_info = DeviceInfo(
@@ -36,6 +52,13 @@ class KocomBaseEntity(RestoreEntity):
             name=f"{self.format_identifiers}",
             via_device=(DOMAIN, str(self.gateway.host)),
         )
+        
+    @property
+    def format_key(self) -> str:
+        if self._device.key.sub_type == SubType.NONE:
+            return self._device.key.device_type.name.lower()
+        else:
+            return f"{self._device.key.device_type.name.lower()}-{self._device.key.sub_type.name.lower()}"
 
     @property
     def format_translation_placeholders(self) -> str:
@@ -80,4 +103,7 @@ class KocomBaseEntity(RestoreEntity):
 
     @property
     def extra_restore_state_data(self) -> RestoredExtraData:
-        return RestoredExtraData({"store_packet": self._device._store_packet})
+        return RestoredExtraData({
+            "packet": getattr(self._device, "_packet", bytes()).hex(),
+            "device_storage": self.gateway.controller._device_storage
+        })

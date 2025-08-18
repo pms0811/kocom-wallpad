@@ -113,7 +113,6 @@ class KocomGateway:
         self.controller = KocomController(self)
         self.registry = EntityRegistry()
         self._task_reader: asyncio.Task | None = None
-        self._task_reconnect: asyncio.Task | None = None
         self._send_lock = asyncio.Lock()
         self._pendings: list[_PendingWaiter] = []
         self._last_rx_monotonic: float = 0.0
@@ -127,7 +126,6 @@ class KocomGateway:
         self._last_rx_monotonic = self.conn.idle_since()
         self._last_tx_monotonic = self.conn.idle_since()
         self._task_reader = asyncio.create_task(self._read_loop())
-        self._task_reconnect = asyncio.create_task(self.conn.auto_reconnect())
 
     async def async_stop(self, event: Event | None = None) -> None:
         LOGGER.info("Stopping gateway - %s:%s", self.host, self.port or "")
@@ -135,10 +133,6 @@ class KocomGateway:
             self._task_reader.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._task_reader
-        if self._task_reconnect:
-            self._task_reconnect.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task_reconnect
         await self.conn.close()
 
     def is_idle(self) -> bool:
@@ -148,6 +142,9 @@ class KocomGateway:
         try:
             LOGGER.debug("Starting read loop")
             while True:
+                if not self.conn._is_connected():
+                    await asyncio.sleep(5)
+                    continue
                 chunk = await self.conn.recv(512, RECV_POLL_SEC)
                 if chunk:
                     self._last_rx_monotonic = asyncio.get_running_loop().time()
@@ -171,6 +168,8 @@ class KocomGateway:
                         break
 
                 # 전송
+                if not self.conn._is_connected():
+                    return False
                 await self.conn.send(packet)
                 self._last_tx_monotonic = asyncio.get_running_loop().time()
 
@@ -190,10 +189,10 @@ class KocomGateway:
                         LOGGER.error("Command '%s' failed after %d attempts.", action, SEND_RETRY_MAX)
                         return False
 
-    def on_device_state(self, dev: DeviceState) -> None:
+    def on_device_state(self, dev: DeviceState) -> None:  
         allow_insert = True
         if dev.key.device_type in (DeviceType.LIGHT, DeviceType.OUTLET):
-            allow_insert = bool(getattr(dev, "_should_register", True))
+            allow_insert = bool(getattr(dev, "_is_register", True))
             if getattr(self, "_force_register_uid", None) == dev.key.unique_id:
                 allow_insert = True
 
@@ -232,16 +231,19 @@ class KocomGateway:
         state = restore_state.async_get(self.hass).last_states.get(entity_id)
         if not (state and state.extra_data):
             return
-        packet = state.extra_data.as_dict().get("store_packet")
-        if packet is None:
+        packet = state.extra_data.as_dict().get("packet")
+        if not packet:
             return
         ent_reg = er.async_get(self.hass)
         ent_entry = ent_reg.async_get(entity_id)
         if ent_entry and ent_entry.unique_id:
-            self._force_register_uid = ent_entry.unique_id
-        LOGGER.debug("Restore last dispatch packet: %s", packet)
+            self._force_register_uid = ent_entry.unique_id.split(":")[0]
+        LOGGER.debug("Restore state -> packet: %s", packet)
         self.controller._dispatch_packet(bytes.fromhex(packet))
         self._force_register_uid = None
+        device_storage = state.extra_data.as_dict().get("device_storage", {})
+        LOGGER.debug("Restore state -> device_storage: %s", device_storage)
+        self.controller._device_storage = device_storage
 
     async def async_get_entity_registry(self) -> None:
         self._restore_mode = True

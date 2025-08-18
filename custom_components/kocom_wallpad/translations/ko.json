@@ -42,6 +42,24 @@
             "elevator": {
                 "name": "엘리베이터 {id}"
             }
+        },
+        "climate": {
+            "thermostat": {
+                "name": "난방 {id}"
+            }
+        },
+        "fan": {
+            "ventilation": {
+                "name": "환기 {id}"
+            }
+        },
+        "sensor": {
+            "elevator-direction": {
+                "name": "엘리베이터 방향 {id}"
+            },
+            "elevator-floor": {
+                "name":"엘리베이터 층수 {id}"
+            }
         }
     }
 }

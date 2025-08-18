@@ -1,8 +1,8 @@
-"""Fan Platform for Kocom Wallpad."""
+"""Fan platform for Kocom Wallpad."""
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Optional, List
 
 from homeassistant.components.fan import FanEntity, FanEntityFeature
 
@@ -17,6 +17,8 @@ from homeassistant.util.percentage import (
 )
 
 from .gateway import KocomGateway
+from .models import DeviceState
+from .entity_base import KocomBaseEntity
 from .const import DOMAIN, LOGGER
 
 
@@ -26,42 +28,74 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Kocom fan platform."""
+    gateway: KocomGateway = hass.data[DOMAIN][entry.entry_id]
+
+    @callback
+    def async_add_fan(devices=None):
+        """Add fan entities."""
+        if devices is None:
+            devices = gateway.get_devices_from_platform(Platform.FAN)
+
+        entities: List[KocomFan] = []
+        for dev in devices:
+            entity = KocomFan(gateway, dev)
+            entities.append(entity)
+        if entities:
+            async_add_entities(entities)
+
+    entry.async_on_unload(
+        async_dispatcher_connect(
+            hass, gateway.async_signal_new_device(Platform.FAN), async_add_fan
+        )
+    )
+    async_add_fan()
 
 
-class KocomVentilationEntity(FanEntity):
+class KocomFan(KocomBaseEntity, FanEntity):
     """Representation of a Kocom fan."""
 
-    def __init__(self, gateway: KocomGateway) -> None:
+    def __init__(self, gateway: KocomGateway, device: DeviceState) -> None:
         """Initialize the fan."""
-        super().__init__(gateway)
+        super().__init__(gateway, device)
+        self._attr_supported_features = (
+            FanEntityFeature.SET_SPEED |
+            FanEntityFeature.TURN_OFF |
+            FanEntityFeature.TURN_ON
+        )
+        if device.attribute["feature_preset"]:
+            self._attr_supported_features |= FanEntityFeature.PRESET_MODE
 
     @property
     def is_on(self) -> bool:
-        """Return the state of the fan."""
-        return False
+        return self._device.state["state"]
+    
+    @property
+    def speed_count(self) -> int:
+        return len(self._device.attribute["speed_list"])
 
     @property
     def percentage(self) -> int:
-        """Return the current speed percentage."""
-        if False:
+        if not self._device.state["state"] or self._device.state["speed"] == 0:
             return 0
-        return ordered_list_item_to_percentage(self._attr_speed_list, 0)
+        return ordered_list_item_to_percentage(self._device.attribute["speed_list"], self._device.state["speed"])
     
     @property
     def preset_mode(self) -> str:
-        """Return the current preset mode."""
-        return ""
+        return self._device.state["preset_mode"]
     
+    @property
+    def preset_modes(self) -> List[str]:
+        return self._device.attribute["preset_modes"]
+
     async def async_set_percentage(self, percentage: int) -> None:
-        """Set the speed percentage of the fan."""
+        args = {"speed": 0}
         if percentage > 0:
-            speed_item = percentage_to_ordered_list_item(self._attr_speed_list, percentage)
-            fan_speed = 0
-        else:
-            fan_speed = 0
+            args["speed"] = percentage_to_ordered_list_item(self._device.attribute["speed_list"], percentage)
+        await self.gateway.async_send_action(self._device.key, "set_percentage", **args)
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
-        """Set the preset mode of the fan."""
+        args = {"preset_mode": preset_mode}
+        await self.gateway.async_send_action(self._device.key, "set_preset", **args)
 
     async def async_turn_on(
         self,
@@ -70,8 +104,8 @@ class KocomVentilationEntity(FanEntity):
         preset_mode: Optional[str] = None,
         **kwargs: Any,
     ) -> None:
-        """Turn on the fan."""
+        await self.gateway.async_send_action(self._device.key, "turn_on")
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        """Turn off the fan."""
+        await self.gateway.async_send_action(self._device.key, "turn_off")
         

@@ -6,16 +6,16 @@ import logging
 from enum import IntEnum
 from homeassistant.const import Platform
 
-LOGGER = logging.getLogger(__name__)
+LOGGER = logging.getLogger(__package__)
 
 DOMAIN = "kocom_wallpad"
 PLATFORMS = [
     Platform.LIGHT,
     Platform.SWITCH,
-    #Platform.CLIMATE,
-    #Platform.FAN,
+    Platform.CLIMATE,
+    Platform.FAN,
+    Platform.SENSOR,
     #Platform.BINARY_SENSOR,
-    #Platform.SENSOR,
 ]
 
 PACKET_PREFIX = bytes([0xAA, 0x55])

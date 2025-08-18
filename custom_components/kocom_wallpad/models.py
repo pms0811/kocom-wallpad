@@ -20,6 +20,7 @@ DEVICE_TYPE_MAP = {
 }
 
 VENTILATION_PRESET_MAP = {
+    0x00: "unknown",
     0x01: "ventilation",
     0x02: "auto",
     0x03: "bypass",
@@ -57,5 +58,5 @@ class DeviceState:
     """Device state."""
     key: DeviceKey
     platform: Platform
-    attribute: dict[str, Any] | None 
+    attribute: dict[str, Any] 
     state: Union[dict[str, Any], bool, int, float, str]

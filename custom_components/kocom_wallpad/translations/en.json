@@ -42,6 +42,24 @@
             "elevator": {
                 "name": "Elevator {id}"
             }
+        },
+        "climate": {
+            "thermostat": {
+                "name": "Thermostat {id}"
+            }
+        },
+        "fan": {
+            "ventilation": {
+                "name": "Ventilation {id}"
+            }
+        },
+        "sensor": {
+            "elevator-direction": {
+                "name": "Elevator Direction {id}"
+            },
+            "elevator-floor": {
+                "name": "Elevator Floor {id}"
+            }
         }
     }
 }

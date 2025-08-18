@@ -172,6 +172,3 @@ cython_debug/
 .Trashes
 .VolumeIcon.icns
 .fseventsd
-
-.qodo
-.vscode
