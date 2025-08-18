@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from typing import Any, List
+
 from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
-    BinarySensorDeviceClass,
+    BinarySensorDeviceClass
 )
 
 from homeassistant.const import Platform
@@ -54,3 +56,16 @@ class KocomBinarySensor(KocomBaseEntity, BinarySensorEntity):
     def __init__(self, gateway: KocomGateway, device: DeviceState) -> None:
         """Initialize the binary sensor."""
         super().__init__(gateway, device)
+
+    @property
+    def is_on(self) -> bool:
+        return self._device.state
+    
+    @property
+    def device_class(self) -> BinarySensorDeviceClass | None:
+        return self._device.attribute.get("device_class", None)
+    
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        return self._device.attribute.get("extra_state", None)
+    

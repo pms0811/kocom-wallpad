@@ -29,7 +29,7 @@
                 "name": "디밍 조명 {id}"
             },
             "lightcutoff": {
-                "name": "일괄소등"
+                "name": "일괄소등 {id}"
             }
         },
         "switch": {
@@ -46,6 +46,9 @@
         "climate": {
             "thermostat": {
                 "name": "난방 {id}"
+            },
+            "airconditioner": {
+                "name": "에어컨 {id}"
             }
         },
         "fan": {
@@ -59,6 +62,44 @@
             },
             "elevator-floor": {
                 "name":"엘리베이터 층수 {id}"
+            },
+            "airquality-co2": {
+                "name": "공기질 CO2 {id}"
+            },
+            "airquality-voc": {
+                "name": "공기질 VOC {id}"
+            },
+            "airquality-pm25": {
+                "name": "공기질 PM2.5 {id}"
+            },
+            "airquality-pm10": {
+                "name": "공기질 PM10 {id}"
+            },
+            "airquality-humidity": {
+                "name": "공기질 습도 {id}"
+            },
+            "airquality-temp": {
+                "name": "공기질 온도 {id}"
+            },
+            "thermostat-heattemp": {
+                "name": "보일러 난방수 온도 {id}"
+            },
+            "thermostat-hottemp": {
+                "name": "보일러 온수 온도 {id}"
+            },
+            "ventilation-co2": {
+                "name": "환기 CO2 {id}"
+            }
+        },
+        "binary_sensor": {
+            "motion": {
+                "name": "움직임 감지기(현관) {id}"
+            },
+            "thermostat-errcode": {
+                "name": "보일러 오류코드 {id}"
+            },
+            "ventilation-errcode": {
+                "name": "환기 오류코드 {id}"
             }
         }
     }

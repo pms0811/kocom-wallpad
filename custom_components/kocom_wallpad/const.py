@@ -15,7 +15,7 @@ PLATFORMS = [
     Platform.CLIMATE,
     Platform.FAN,
     Platform.SENSOR,
-    #Platform.BINARY_SENSOR,
+    Platform.BINARY_SENSOR,
 ]
 
 PACKET_PREFIX = bytes([0xAA, 0x55])
@@ -50,3 +50,12 @@ class SubType(IntEnum):
     NONE = 0
     DIRECTION = 1
     FLOOR = 2
+    ERRCODE = 3
+    HEATTEMP = 4
+    HOTTEMP = 5
+    CO2 = 6
+    PM10 = 7
+    PM25 = 8
+    VOC = 9
+    TEMP = 10
+    HUMIDITY = 11

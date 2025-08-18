@@ -56,8 +56,6 @@ class KocomSwitch(KocomBaseEntity, SwitchEntity):
         
     @property
     def device_class(self) -> SwitchDeviceClass:
-        if not self._device.attribute:
-            return SwitchDeviceClass.SWITCH
         return self._device.attribute.get("device_class", SwitchDeviceClass.SWITCH)
 
     @property

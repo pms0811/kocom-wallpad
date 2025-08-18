@@ -14,9 +14,12 @@ DEVICE_TYPE_MAP = {
     0x0E: DeviceType.LIGHT,
     0x3B: DeviceType.OUTLET,
     0x36: DeviceType.THERMOSTAT,
+    0x39: DeviceType.AIRCONDITIONER,
     0x48: DeviceType.VENTILATION,
     0x2C: DeviceType.GASVALVE,
-    0x44: DeviceType.ELEVATOR
+    0x44: DeviceType.ELEVATOR,
+    0x60: DeviceType.MOTION,
+    0x98: DeviceType.AIRQUALITY,
 }
 
 VENTILATION_PRESET_MAP = {

@@ -5,7 +5,9 @@ from __future__ import annotations
 from typing import List, Callable, Any, Tuple
 from dataclasses import dataclass, replace
 
-from homeassistant.const import Platform
+from homeassistant.const import Platform, UnitOfTemperature
+from homeassistant.components.sensor import SensorDeviceClass
+from homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from homeassistant.components.switch import SwitchDeviceClass
 from homeassistant.components.climate.const import (
     PRESET_NONE,
@@ -141,7 +143,10 @@ class KocomController:
 
         dev_state = None
         if frame.dev_type == DeviceType.LIGHT:
-            dev_state = self._handle_switch(frame)
+            if frame.dev_room == 0xFF:
+                dev_state = self._handle_cutoff_switch(frame)
+            else:
+                dev_state = self._handle_switch(frame)
         elif frame.dev_type == DeviceType.OUTLET:
             dev_state = self._handle_switch(frame)
         elif frame.dev_type == DeviceType.THERMOSTAT:
@@ -152,6 +157,10 @@ class KocomController:
             dev_state = self._handle_gasvalve(frame)
         elif frame.dev_type == DeviceType.ELEVATOR:
             dev_state = self._handle_elevator(frame)
+        elif frame.dev_type == DeviceType.MOTION:
+            dev_state = self._handle_motion(frame)
+        elif frame.dev_type == DeviceType.AIRQUALITY:
+            dev_state = self._handle_airquality(frame)
         else:
             LOGGER.debug("Unhandled device type: %s (raw=%s)", frame.dev_type.name, frame.raw.hex())
             return
@@ -166,6 +175,18 @@ class KocomController:
         else:
             dev_state._packet = packet
             self.gateway.on_device_state(dev_state)
+            
+    def _handle_cutoff_switch(self, frame: PacketFrame) -> DeviceState:
+        if frame.command in (0x65, 0x66):
+            key = DeviceKey(
+                device_type=frame.dev_type,
+                room_index=0,
+                device_index=0,
+                sub_type=SubType.NONE,
+            )
+            state = frame.command == 0x65
+            dev = DeviceState(key=key, platform=Platform.LIGHT, attribute={}, state=state)
+            return dev
 
     def _handle_switch(self, frame: PacketFrame) -> List[DeviceState]:
         states: List[DeviceState] = []
@@ -190,7 +211,8 @@ class KocomController:
                 states.append(dev)
             return states
 
-    def _handle_thermostat(self, frame: PacketFrame) -> DeviceState:
+    def _handle_thermostat(self, frame: PacketFrame) -> List[DeviceState]:
+        states: List[DeviceState] = []
         if frame.command == 0x00:
             key = DeviceKey(
                 device_type=frame.dev_type,
@@ -202,29 +224,78 @@ class KocomController:
             preset_mode = PRESET_AWAY if frame.payload[1] & 0x0F == 0x01 else PRESET_NONE
             target_temp = float(frame.payload[2])
             current_temp = float(frame.payload[4])
+            hot_temp = frame.payload[3]
+            heat_temp = frame.payload[5]
+            error_code = frame.payload[6]
 
             attribute = {
                 "hvac_modes": [HVACMode.HEAT, HVACMode.OFF],
                 "feature_preset": True,
                 "preset_modes": [PRESET_AWAY, PRESET_NONE],
-                "temp_step": self._device_storage.get("temp_step", 1.0),
+                "temp_step": self._device_storage.get("thermo_step", 1.0),
             }
             state = {
                 "hvac_mode": havc_mode,
                 "preset_mode": preset_mode,
-                "target_temp": self._device_storage.get("target_temp", target_temp),
-                "current_temp": self._device_storage.get("current_temp", current_temp),
+                "target_temp": self._device_storage.get("thermo_target", target_temp),
+                "current_temp": self._device_storage.get("thermo_current", current_temp),
             }
-            if target_temp % 1 == 0.5 and self._device_storage.get("temp_step") != 0.5:
+            if target_temp % 1 == 0.5 and self._device_storage.get("thermo_step") != 0.5:
                 LOGGER.debug("0.5°C step detected, heating supports 0.5 increments.")
-                self._device_storage["temp_step"] = 0.5
+                self._device_storage["thermo_step"] = 0.5
             if target_temp != 0 and current_temp != 0:
-                self._device_storage["target_temp"] = target_temp
-                self._device_storage["current_temp"] = current_temp
+                self._device_storage["thermo_target"] = target_temp
+                self._device_storage["thermo_current"] = current_temp
             dev = DeviceState(key=key, platform=Platform.CLIMATE, attribute=attribute, state=state)
-            return dev
+            states.append(dev)
+            
+            key = DeviceKey(
+                device_type=frame.dev_type,
+                room_index=frame.dev_room,
+                device_index=0,
+                sub_type=SubType.HOTTEMP,
+            )
+            attribute = {
+                "device_class": SensorDeviceClass.TEMPERATURE,
+                "unit_of_measurement": UnitOfTemperature.CELSIUS
+            }
+            if hot_temp > 0:
+                dev = DeviceState(key=key, platform=Platform.SENSOR, attribute=attribute, state=hot_temp)
+                states.append(dev)
+            
+            key = DeviceKey(
+                device_type=frame.dev_type,
+                room_index=frame.dev_room,
+                device_index=0,
+                sub_type=SubType.HEATTEMP,
+            )
+            attribute = {
+                "device_class": SensorDeviceClass.TEMPERATURE,
+                "unit_of_measurement": UnitOfTemperature.CELSIUS
+            }
+            if heat_temp > 0:
+                dev = DeviceState(key=key, platform=Platform.SENSOR, attribute=attribute, state=heat_temp)
+                states.append(dev)
+            
+            key = DeviceKey(
+                device_type=frame.dev_type,
+                room_index=frame.dev_room,
+                device_index=0,
+                sub_type=SubType.ERRCODE,
+            )
+            attribute = {
+                "extra_state": {
+                    "error_code": f"{error_code:02}"
+                },
+                "device_class": BinarySensorDeviceClass.PROBLEM
+            }
+            state = error_code != 0x00
+            dev = DeviceState(key=key, platform=Platform.BINARY_SENSOR, attribute=attribute, state=state)
+            states.append(dev)
+            return states
 
-    def _handle_ventilation(self, frame: PacketFrame) -> DeviceState:
+    def _handle_ventilation(self, frame: PacketFrame) -> List[DeviceState]:
+        states: List[DeviceState] = []
         if frame.command == 0x00:
             key = DeviceKey(
                 device_type=frame.dev_type,
@@ -235,10 +306,12 @@ class KocomController:
             state = frame.payload[0] >> 4 == 0x01
             preset_mode = VENTILATION_PRESET_MAP.get(frame.payload[1], "unknown")
             speed = frame.payload[2]
-            
+            co2_value = (frame.payload[4] * 100) + frame.payload[5]
+            error_code = frame.payload[6]
+
             attribute = {
-                "feature_preset": self._device_storage.get("feature_preset", False),
-                "preset_modes": self._device_storage.get("preset_modes", []),
+                "feature_preset": self._device_storage.get("ventil_feature", False),
+                "preset_modes": self._device_storage.get("ventil_modes", []),
                 "speed_list": [0x40, 0x80, 0xC0]
             }
             state = {
@@ -247,15 +320,46 @@ class KocomController:
                 "speed": speed,
             }
             if preset_mode != "unknown" and preset_mode != "ventilation":
-                if self._device_storage.get("preset_modes") is None:
+                if self._device_storage.get("ventil_modes") is None:
                     LOGGER.debug("New ventilation preset detected (excluding default).")
-                    self._device_storage["feature_preset"] = True
-                    self._device_storage["preset_modes"] = ["ventilation"]
-                if preset_mode not in self._device_storage["preset_modes"]:
+                    self._device_storage["ventil_feature"] = True
+                    self._device_storage["ventil_modes"] = ["ventilation"]
+                if preset_mode not in self._device_storage["ventil_modes"]:
                     LOGGER.debug(f"Added presets: {preset_mode}")
-                    self._device_storage["preset_modes"].append(preset_mode)
+                    self._device_storage["ventil_modes"].append(preset_mode)
             dev = DeviceState(key=key, platform=Platform.FAN, attribute=attribute, state=state)
-            return dev
+            states.append(dev)
+            
+            key = DeviceKey(
+                device_type=frame.dev_type,
+                room_index=frame.dev_room,
+                device_index=0,
+                sub_type=SubType.CO2,
+            )
+            attribute = {
+                "device_class": SensorDeviceClass.CO2,
+                "unit_of_measurement": "ppm"
+            }
+            if co2_value > 0:
+                dev = DeviceState(key=key, platform=Platform.SENSOR, attribute=attribute, state=co2_value)
+                states.append(dev)
+            
+            key = DeviceKey(
+                device_type=frame.dev_type,
+                room_index=frame.dev_room,
+                device_index=0,
+                sub_type=SubType.ERRCODE,
+            )
+            attribute = {
+                "extra_state": {
+                    "error_code": f"{error_code:02}"
+                },
+                "device_class": BinarySensorDeviceClass.PROBLEM
+            }
+            state = error_code != 0x00
+            dev = DeviceState(key=key, platform=Platform.BINARY_SENSOR, attribute=attribute, state=state)
+            states.append(dev)
+            return states
 
     def _handle_gasvalve(self, frame: PacketFrame) -> DeviceState:
         if frame.command in (0x01, 0x02):
@@ -316,12 +420,55 @@ class KocomController:
                     state = f"B{str(frame.payload[1] & 0x0F)}"
                 else:
                     state = str(frame.payload[1])
-        dev = DeviceState(key=key, platform=Platform.SENSOR, attribute={}, state=state)
         if state != "" and state != "unknown":
             self._device_storage["available_floor"] = True
         if self._device_storage.get("available_floor", False):
+            dev = DeviceState(key=key, platform=Platform.SENSOR, attribute={}, state=state)
             states.append(dev)
         return states
+    
+    def _handle_motion(self, frame: PacketFrame) -> DeviceState:
+        if frame.command in (0x00, 0x04):
+            key = DeviceKey(
+                device_type=frame.dev_type,
+                room_index=frame.dev_room,
+                device_index=0,
+                sub_type=SubType.NONE,
+            )
+            attribute = {
+                "device_class": BinarySensorDeviceClass.MOTION
+            }
+            state = frame.command == 0x04
+            dev = DeviceState(key=key, platform=Platform.BINARY_SENSOR, attribute=attribute, state=state)
+            return dev
+        
+    def _handle_airquality(self, frame: PacketFrame) -> List[DeviceState]:
+        states: List[DeviceState] = []
+        if frame.command in (0x00, 0x3A):
+            data_mapping = {
+                SubType.PM10: (SensorDeviceClass.PM10, "µg/m³", frame.payload[0]),
+                SubType.PM25: (SensorDeviceClass.PM25, "µg/m³", frame.payload[1]),
+                SubType.CO2: (SensorDeviceClass.CO2, "ppm", int.from_bytes(frame.payload[2:4], 'big')),
+                SubType.VOC: (SensorDeviceClass.VOLATILE_ORGANIC_COMPOUNDS, "µg/m³", int.from_bytes(frame.payload[4:6], 'big')),
+                SubType.TEMP: (SensorDeviceClass.TEMPERATURE, UnitOfTemperature.CELSIUS, frame.payload[6]),
+                SubType.HUMIDITY: (SensorDeviceClass.HUMIDITY, "%", frame.payload[7]),
+            }
+            for key, value in data_mapping.items():
+                device_class, native_unit, state = value
+                key = DeviceKey(
+                    device_type=frame.dev_type,
+                    room_index=frame.dev_room,
+                    device_index=0,
+                    sub_type=key,
+                )
+                attribute = {
+                    "device_class": device_class,
+                    "unit_of_measurement": native_unit
+                }
+                if state > 0:
+                    dev = DeviceState(key=key, platform=Platform.SENSOR, attribute=attribute, state=state)
+                    states.append(dev)
+            return states
     
     # TODO: 명령 상태 비교 로직 통합 (gateway.py)
     def _match_key_and(self, key: DeviceKey, cond: Predicate) -> Predicate:

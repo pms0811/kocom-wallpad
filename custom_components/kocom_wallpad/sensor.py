@@ -63,8 +63,8 @@ class KocomSensor(KocomBaseEntity, SensorEntity):
     
     @property
     def device_class(self) -> SensorDeviceClass | None:
-        return None
+        return self._device.attribute.get("device_class", None)
     
     @property
     def native_unit_of_measurement(self) -> str | None:
-        return None
+        return self._device.attribute.get("unit_of_measurement", None)
