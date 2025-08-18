@@ -317,8 +317,9 @@ class KocomController:
                 else:
                     state = str(frame.payload[1])
         dev = DeviceState(key=key, platform=Platform.SENSOR, attribute={}, state=state)
-        # Except for wallpad that do not support floor
-        if dev.state != "":
+        if state != "" and state != "unknown":
+            self._device_storage["available_floor"] = True
+        if self._device_storage.get("available_floor", False):
             states.append(dev)
         return states
     
@@ -378,7 +379,7 @@ class KocomController:
             return self._match_key_and(key, lambda d: isinstance(d.state, dict) and d.state.get("preset_mode") == pm), CMD_CONFIRM_TIMEOUT
         if action == "set_temperature":
             tt = kwargs["target_temp"]
-            return self._match_key_and(key, lambda d: isinstance(d.state, dict) and d.state.get("target_temp") == tt), CMD_CONFIRM_TIMEOUT
+            return self._match_key_and(key, lambda d: isinstance(d.state, dict) and d.state.get("target_temp") == tt), max(CMD_CONFIRM_TIMEOUT, 1.5)
         if action == "turn_on":
             return self._match_key_and(key, lambda d: isinstance(d.state, dict) and d.state.get("state") is True), CMD_CONFIRM_TIMEOUT
         if action == "turn_off":
@@ -474,5 +475,6 @@ class KocomController:
             data[1] = 0x01 if pm == PRESET_AWAY else 0x00
         elif action == "set_temperature":
             tt = kwargs["target_temp"]
+            data[0] = 0x11
             data[2] = int(tt)
         return data
