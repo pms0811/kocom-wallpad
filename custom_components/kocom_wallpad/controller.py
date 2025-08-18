@@ -535,7 +535,7 @@ class KocomController:
 
     def build_expectation(self, key: DeviceKey, action: str, **kwargs: Any) -> Tuple[Predicate, float]:
         dt = key.device_type
-        if dt in (DeviceType.LIGHT, DeviceType.OUTLET):
+        if dt in (DeviceType.LIGHT, DeviceType.LIGHTCUTOFF, DeviceType.OUTLET, DeviceType.ELEVATOR):
             return self._expect_for_switch_like(key, action, **kwargs)
         if dt == DeviceType.VENTILATION:
             return self._expect_for_ventilation(key, action, **kwargs)
