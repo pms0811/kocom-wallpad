@@ -68,14 +68,14 @@ class PacketFrame:
         return self.raw[18]
 
     @property
-    def peer(self) -> tuple[int | None, int | None]:
+    def peer(self) -> tuple[int, int]:
         if self.dest[0] == 0x01:
             return (self.src[0], self.src[1])
         elif self.src[0] == 0x01:
             return (self.dest[0], self.dest[1])
         else:
             LOGGER.warning("Peer resolution failed: dest=%s, src=%s", self.dest.hex(), self.src.hex())
-            return (None, None)
+            return (0, 0)
 
     @property
     def dev_type(self) -> DeviceType:
@@ -86,7 +86,7 @@ class PacketFrame:
         return dev_type
 
     @property
-    def dev_room(self) -> int | None:
+    def dev_room(self) -> int:
         return self.peer[1]
 
 
