@@ -1,10 +1,12 @@
-"""Binary Sensor Platform for Kocom Wallpad."""
+"""Binary Sensor platform for Kocom Wallpad."""
 
 from __future__ import annotations
 
+from typing import Any, List
+
 from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
-    BinarySensorDeviceClass,
+    BinarySensorDeviceClass
 )
 
 from homeassistant.const import Platform
@@ -13,13 +15,10 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
-from .pywallpad.const import STATE, CODE, TIME
-from .pywallpad.enums import DeviceType
-from .pywallpad.packet import KocomPacket
-
 from .gateway import KocomGateway
-from .entity import KocomEntity
-from .const import DOMAIN, LOGGER, DEVICE_TYPE, ROOM_ID, SUB_ID
+from .models import DeviceState
+from .entity_base import KocomBaseEntity
+from .const import DOMAIN, LOGGER
 
 
 async def async_setup_entry(
@@ -29,43 +28,44 @@ async def async_setup_entry(
 ) -> None:
     """Set up Kocom binary sensor platform."""
     gateway: KocomGateway = hass.data[DOMAIN][entry.entry_id]
-    
+
     @callback
-    def async_add_binary_sensor(packet: KocomPacket) -> None:
-        """Add new binary sensor entity."""
-        async_add_entities([KocomBinarySensorEntity(gateway, packet)])
-    
-    for entity in gateway.get_entities(Platform.BINARY_SENSOR):
-        async_add_binary_sensor(entity)
-        
+    def async_add_binary_sensor(devices=None):
+        """Add binary sensor entities."""
+        if devices is None:
+            devices = gateway.get_devices_from_platform(Platform.BINARY_SENSOR)
+
+        entities: List[KocomBinarySensor] = []
+        for dev in devices:
+            entity = KocomBinarySensor(gateway, dev)
+            entities.append(entity)
+        if entities:
+            async_add_entities(entities)
+
     entry.async_on_unload(
-        async_dispatcher_connect(hass, f"{DOMAIN}_binary_sensor_add", async_add_binary_sensor)
+        async_dispatcher_connect(
+            hass, gateway.async_signal_new_device(Platform.BINARY_SENSOR), async_add_binary_sensor
+        )
     )
+    async_add_binary_sensor()
+    
 
-
-class KocomBinarySensorEntity(KocomEntity, BinarySensorEntity):
+class KocomBinarySensor(KocomBaseEntity, BinarySensorEntity):
     """Representation of a Kocom binary sensor."""
 
-    def __init__(
-        self,
-        gateway: KocomGateway,
-        packet: KocomPacket,
-    ) -> None:
+    def __init__(self, gateway: KocomGateway, device: DeviceState) -> None:
         """Initialize the binary sensor."""
-        super().__init__(gateway, packet)
-        self._attr_is_on = self.packet._device.state[STATE]
-        self._attr_extra_state_attributes = {
-            DEVICE_TYPE: self.packet._device.device_type,
-            ROOM_ID: self.packet._device.room_id,
-            SUB_ID: self.packet._device.sub_id,
-        }
+        super().__init__(gateway, device)
 
-        if self.packet.device_type == DeviceType.MOTION:
-            self._attr_device_class = BinarySensorDeviceClass.MOTION
-            self._attr_extra_state_attributes[TIME] = self.packet._device.state[TIME]
-        elif self.packet.device_type == "doorphone":
-            self._attr_device_class = BinarySensorDeviceClass.SOUND
-            self._attr_extra_state_attributes[TIME] = self.packet._device.state[TIME]
-        else:
-            self._attr_device_class = BinarySensorDeviceClass.PROBLEM
-            self._attr_extra_state_attributes[CODE] = self.packet._device.state[CODE]
+    @property
+    def is_on(self) -> bool:
+        return self._device.state
+    
+    @property
+    def device_class(self) -> BinarySensorDeviceClass | None:
+        return self._device.attribute.get("device_class", None)
+    
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        return self._device.attribute.get("extra_state", None)
+    
