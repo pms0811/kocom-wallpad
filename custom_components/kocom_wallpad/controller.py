@@ -151,6 +151,8 @@ class KocomController:
             dev_state = self._handle_switch(frame)
         elif frame.dev_type == DeviceType.THERMOSTAT:
             dev_state = self._handle_thermostat(frame)
+        elif frame.dev_type == DeviceType.AIRCONDITIONER:
+            dev_state = self._handle_airconditioner(frame)
         elif frame.dev_type == DeviceType.VENTILATION:
             dev_state = self._handle_ventilation(frame)
         elif frame.dev_type == DeviceType.GASVALVE:
@@ -293,6 +295,9 @@ class KocomController:
             dev = DeviceState(key=key, platform=Platform.BINARY_SENSOR, attribute=attribute, state=state)
             states.append(dev)
             return states
+        
+    def _handle_airconditioner(self, frame: PacketFrame) -> DeviceState:
+        pass
 
     def _handle_ventilation(self, frame: PacketFrame) -> List[DeviceState]:
         states: List[DeviceState] = []
@@ -569,6 +574,8 @@ class KocomController:
             data = self._generate_ventilation(action, data, **kwargs)
         elif device_type == DeviceType.THERMOSTAT:
             data = self._generate_thermostat(action, data, **kwargs)
+        elif device_type == DeviceType.AIRCONDITIONER:
+            data = self._generate_airconditioner(action, data, **kwargs)
         elif device_type == DeviceType.GASVALVE:
             command = bytes([0x02])
         elif device_type == DeviceType.ELEVATOR:
@@ -625,3 +632,7 @@ class KocomController:
             data[0] = 0x11
             data[2] = int(tt)
         return data
+    
+    def _generate_airconditioner(self, action: str, data: bytes, **kwargs: Any) -> bytes:
+        pass
+    
