@@ -6,6 +6,14 @@ from dataclasses import dataclass
 from typing import Any, Tuple, Union
 
 from homeassistant.const import Platform
+from homeassistant.components.climate.const import (
+    HVACMode,
+    FAN_LOW,
+    FAN_MEDIUM,
+    FAN_HIGH,
+    FAN_AUTO,
+    FAN_OFF,
+)
 
 from .const import DeviceType, SubType
 
@@ -20,6 +28,21 @@ DEVICE_TYPE_MAP = {
     0x44: DeviceType.ELEVATOR,
     0x60: DeviceType.MOTION,
     0x98: DeviceType.AIRQUALITY,
+}
+
+AIRCONDITIONER_HVAC_MAP = {
+    0x00: HVACMode.COOL,
+    0x01: HVACMode.FAN_ONLY,
+    0x02: HVACMode.DRY,
+    0x03: HVACMode.AUTO
+}
+
+AIRCONDITIONER_FAN_MAP = {
+    0x00: FAN_OFF,
+    0x01: FAN_LOW,
+    0x02: FAN_MEDIUM,
+    0x03: FAN_HIGH,
+    0x04: FAN_AUTO
 }
 
 VENTILATION_PRESET_MAP = {

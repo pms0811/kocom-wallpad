@@ -12,6 +12,7 @@ from homeassistant.components.switch import SwitchDeviceClass
 from homeassistant.components.climate.const import (
     PRESET_NONE,
     PRESET_AWAY,
+    FAN_OFF,
     HVACMode,
 )
 
@@ -26,6 +27,8 @@ from .const import (
 )
 from .models import (
     DEVICE_TYPE_MAP,
+    AIRCONDITIONER_HVAC_MAP,
+    AIRCONDITIONER_FAN_MAP,
     VENTILATION_PRESET_MAP,
     ELEVATOR_DIRECTION_MAP,
     DeviceKey,
@@ -35,6 +38,8 @@ from .models import (
 Predicate = Callable[[DeviceState], bool]
 
 REV_DT_MAP = {v: k for k, v in DEVICE_TYPE_MAP.items()}
+REV_AC_HVAC_MAP = {v: k for k, v in AIRCONDITIONER_HVAC_MAP.items()}
+REV_AC_FAN_MAP = {v: k for k, v in AIRCONDITIONER_FAN_MAP.items()}
 REV_VENT_PRESET_MAP = {v: k for k, v in VENTILATION_PRESET_MAP.items()}
 
 
@@ -246,7 +251,9 @@ class KocomController:
                 LOGGER.debug("0.5°C step detected, heating supports 0.5 increments.")
                 self._device_storage["thermo_step"] = 0.5
             if target_temp != 0 and current_temp != 0:
-                self._device_storage["thermo_target"] = target_temp
+                if havc_mode == HVACMode.HEAT and self._device_storage.get("thermo_target") != target_temp:
+                    LOGGER.debug(f"User target temperature update: {target_temp}")
+                    self._device_storage["thermo_target"] = target_temp
                 self._device_storage["thermo_current"] = current_temp
             dev = DeviceState(key=key, platform=Platform.CLIMATE, attribute=attribute, state=state)
             states.append(dev)
@@ -297,8 +304,39 @@ class KocomController:
             return states
         
     def _handle_airconditioner(self, frame: PacketFrame) -> DeviceState:
-        pass
+        if frame.command == 0x00:
+            key = DeviceKey(
+                device_type=frame.dev_type,
+                room_index=frame.dev_room,
+                device_index=0,
+                sub_type=SubType.NONE,
+            )
+            if frame.payload[0] == 0x10:
+                havc_mode = AIRCONDITIONER_HVAC_MAP.get(frame.payload[1], HVACMode.OFF) 
+            else:
+                havc_mode = HVACMode.OFF
+            fan_mode = AIRCONDITIONER_FAN_MAP.get(frame.payload[2], FAN_OFF)
+            current_temp = float(frame.payload[4])
+            target_temp = float(frame.payload[5])
 
+            attribute = {
+                "hvac_modes": [*AIRCONDITIONER_HVAC_MAP.values(), HVACMode.OFF],
+                "fan_modes": [*AIRCONDITIONER_FAN_MAP.values()],
+                "feature_fan": True,
+                "temp_step": 1.0,
+            }
+            state = {
+                "hvac_mode": havc_mode,
+                "fan_mode": fan_mode,
+                "current_temp": self._device_storage.get("ac_current", current_temp),
+                "target_temp": self._device_storage.get("ac_target", target_temp),
+            }
+            if target_temp != 0 and current_temp != 0:
+                self._device_storage["ac_current"] = current_temp
+                self._device_storage["ac_target"] = target_temp
+            dev = DeviceState(key=key, platform=Platform.CLIMATE, attribute=attribute, state=state)
+            return dev
+    
     def _handle_ventilation(self, frame: PacketFrame) -> List[DeviceState]:
         states: List[DeviceState] = []
         if frame.command == 0x00:
@@ -537,6 +575,25 @@ class KocomController:
         if action == "turn_off":
             return self._match_key_and(key, lambda d: isinstance(d.state, dict) and d.state.get("state") is False), CMD_CONFIRM_TIMEOUT
         return self._match_key_and(key, lambda _d: False), CMD_CONFIRM_TIMEOUT
+    
+    def _expect_for_airconditioner(self, key: DeviceKey, action: str, **kwargs: Any) -> Tuple[Predicate, float]:
+        if action == "set_hvac":
+            hm = kwargs["hvac_mode"]
+            return self._match_key_and(key, lambda d: isinstance(d.state, dict) and d.state.get("hvac_mode") == hm), CMD_CONFIRM_TIMEOUT
+        if action == "set_fan":
+            fm = kwargs["fan_mode"]
+            return self._match_key_and(key, lambda d: isinstance(d.state, dict) and d.state.get("fan_mode") == fm), CMD_CONFIRM_TIMEOUT
+        if action == "set_preset":
+            pm = kwargs["preset_mode"]
+            return self._match_key_and(key, lambda d: isinstance(d.state, dict) and d.state.get("preset_mode") == pm), CMD_CONFIRM_TIMEOUT
+        if action == "set_temperature":
+            tt = kwargs["target_temp"]
+            return self._match_key_and(key, lambda d: isinstance(d.state, dict) and d.state.get("target_temp") == tt), max(CMD_CONFIRM_TIMEOUT, 1.5)
+        if action == "turn_on":
+            return self._match_key_and(key, lambda d: isinstance(d.state, dict) and d.state.get("state") is True), CMD_CONFIRM_TIMEOUT
+        if action == "turn_off":
+            return self._match_key_and(key, lambda d: isinstance(d.state, dict) and d.state.get("state") is False), CMD_CONFIRM_TIMEOUT
+        return self._match_key_and(key, lambda _d: False), CMD_CONFIRM_TIMEOUT
 
     def build_expectation(self, key: DeviceKey, action: str, **kwargs: Any) -> Tuple[Predicate, float]:
         dt = key.device_type
@@ -548,6 +605,8 @@ class KocomController:
             return self._expect_for_gasvalve(key, action, **kwargs)
         if dt == DeviceType.THERMOSTAT:
             return self._expect_for_thermostat(key, action, **kwargs)
+        if dt == DeviceType.AIRCONDITIONER:
+            return self._expect_for_airconditioner(key, action, **kwargs)            
         return self._match_key_and(key, lambda _d: False), CMD_CONFIRM_TIMEOUT
 
     def generate_command(self, key: DeviceKey, action: str, **kwargs) -> Tuple[bytes, Predicate, float]:
@@ -634,5 +693,18 @@ class KocomController:
         return data
     
     def _generate_airconditioner(self, action: str, data: bytes, **kwargs: Any) -> bytes:
-        pass
+        if action == "set_hvac":
+            hm = kwargs["hvac_mode"]
+            if hm == HVACMode.OFF:
+                data[0] = 0x00
+            else:
+                data[0] = 0x10
+                data[1] = REV_AC_HVAC_MAP[hm]
+        elif action == "set_fan":
+            fm = kwargs["fan_mode"]
+            data[2] = REV_AC_FAN_MAP[fm]
+        elif action == "set_temperature":
+            tt = kwargs["target_temp"]
+            data[5] = int(tt)
+        return data
     

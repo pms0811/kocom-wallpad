@@ -68,7 +68,9 @@ class KocomClimate(KocomBaseEntity, ClimateEntity):
             ClimateEntityFeature.TURN_OFF |
             ClimateEntityFeature.TURN_ON
         )
-        if device.attribute["feature_preset"]:
+        if device.attribute.get("feature_fan", False):
+            self._attr_supported_features |= ClimateEntityFeature.FAN_MODE
+        if device.attribute.get("feature_preset", False):
             self._attr_supported_features |= ClimateEntityFeature.PRESET_MODE
 
     @property
@@ -78,6 +80,14 @@ class KocomClimate(KocomBaseEntity, ClimateEntity):
     @property
     def hvac_modes(self) -> List[HVACMode]:
         return self._device.attribute["hvac_modes"]
+    
+    @property
+    def fan_mode(self) -> str:
+        return self._device.state["fan_mode"]
+    
+    @property
+    def fan_modes(self) -> List[str]:
+        return self._device.attribute["fan_modes"]
 
     @property
     def preset_mode(self) -> str:
@@ -102,6 +112,10 @@ class KocomClimate(KocomBaseEntity, ClimateEntity):
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         args = {"hvac_mode": hvac_mode}
         await self.gateway.async_send_action(self._device.key, "set_hvac", **args)
+        
+    async def async_set_fan_mode(self, fan_mode: str) -> None:
+        args = {"fan_mode": fan_mode}
+        await self.gateway.async_send_action(self._device.key, "set_fan", **args)
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
         args = {"preset_mode": preset_mode}
