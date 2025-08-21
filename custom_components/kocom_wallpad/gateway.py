@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from dataclasses import dataclass, field
 from typing import Optional, Dict, Tuple, List, Callable
 
 from homeassistant.core import HomeAssistant, Event, callback
@@ -24,6 +25,14 @@ from .const import (
 from .models import DeviceKey, DeviceState
 from .transport import AsyncConnection
 from .controller import KocomController
+
+
+@dataclass(slots=True)
+class _CmdItem:
+    key: DeviceKey
+    action: str
+    kwargs: dict
+    future: asyncio.Future = field(default_factory=asyncio.get_running_loop().create_future)
 
 
 class _PendingWaiter:
@@ -112,8 +121,9 @@ class KocomGateway:
         self.conn = AsyncConnection(host=host, port=port)
         self.controller = KocomController(self)
         self.registry = EntityRegistry()
+        self._tx_queue: asyncio.Queue[_CmdItem] = asyncio.Queue()
         self._task_reader: asyncio.Task | None = None
-        self._send_lock = asyncio.Lock()
+        self._task_sender: asyncio.Task | None = None
         self._pendings: list[_PendingWaiter] = []
         self._last_rx_monotonic: float = 0.0
         self._last_tx_monotonic: float = 0.0
@@ -126,6 +136,7 @@ class KocomGateway:
         self._last_rx_monotonic = self.conn.idle_since()
         self._last_tx_monotonic = self.conn.idle_since()
         self._task_reader = asyncio.create_task(self._read_loop())
+        self._task_sender = asyncio.create_task(self._sender_loop())
 
     async def async_stop(self, event: Event | None = None) -> None:
         LOGGER.info("Stopping gateway - %s:%s", self.host, self.port or "")
@@ -133,6 +144,10 @@ class KocomGateway:
             self._task_reader.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._task_reader
+        if self._task_sender:
+            self._task_sender.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._task_sender
         await self.conn.close()
 
     def is_idle(self) -> bool:
@@ -150,44 +165,20 @@ class KocomGateway:
                     self._last_rx_monotonic = asyncio.get_running_loop().time()
                     self.controller.feed(chunk)
         except asyncio.CancelledError:
+            LOGGER.debug("Read loop cancelled")
             raise
 
     async def async_send_action(self, key: DeviceKey, action: str, **kwargs) -> bool:
-        packet, expect_predicate, timeout = self.controller.generate_command(key, action, **kwargs)
-
-        async with self._send_lock:
-            for attempt in range(1, SEND_RETRY_MAX + 1):
-                # idle 대기
-                LOGGER.debug("Waiting for idle state (max %.1f sec)...", 1.0)
-                t0 = asyncio.get_running_loop().time()
-                while not self.is_idle():
-                    await asyncio.sleep(0.01)
-                    if asyncio.get_running_loop().time() - t0 > 1.0:
-                        LOGGER.debug("Idle wait timeout after %.1f sec",
-                                     asyncio.get_running_loop().time() - t0)
-                        break
-
-                # 전송
-                if not self.conn._is_connected():
-                    return False
-                await self.conn.send(packet)
-                self._last_tx_monotonic = asyncio.get_running_loop().time()
-
-                # 확인 대기
-                try:
-                    _ = await self._wait_for_confirmation(key, expect_predicate, timeout)
-                    LOGGER.debug("Command '%s' confirmed on attempt %d", action, attempt)
-                    return True
-                except asyncio.TimeoutError:
-                    if attempt < SEND_RETRY_MAX:
-                        LOGGER.warning(
-                            "No confirmation for '%s' (attempt %d/%d). Retrying in %.2fs...",
-                            action, attempt, SEND_RETRY_MAX, SEND_RETRY_GAP
-                        )
-                        await asyncio.sleep(SEND_RETRY_GAP)
-                    else:
-                        LOGGER.error("Command '%s' failed after %d attempts.", action, SEND_RETRY_MAX)
-                        return False
+        item = _CmdItem(key=key, action=action, kwargs=kwargs)
+        await self._tx_queue.put(item)
+        try:
+            res = await item.future   # 워커가 set_result(True/False)
+            return bool(res)
+        except asyncio.CancelledError:
+            # 정지 중이라면 False로 정리
+            if not item.future.done():
+                item.future.set_result(False)
+            raise
 
     def on_device_state(self, dev: DeviceState) -> None:  
         allow_insert = True
@@ -293,3 +284,77 @@ class KocomGateway:
                     self._pendings.remove(waiter)
                 except ValueError:
                     pass
+
+    async def _sender_loop(self) -> None:
+        LOGGER.debug("Starting sender loop")
+        try:
+            while True:
+                item = await self._tx_queue.get()
+                if item is None:
+                    continue
+
+                # generate packet & expect predicate
+                try:
+                    packet, expect_predicate, timeout = self.controller.generate_command(
+                        item.key, item.action, **item.kwargs
+                    )
+                except Exception as e:
+                    LOGGER.exception("generate_command failed: %s", e)
+                    if not item.future.done():
+                        item.future.set_result(False)
+                    self._tx_queue.task_done()
+                    continue
+
+                # 재시도 루프
+                success = False
+                for attempt in range(1, SEND_RETRY_MAX + 1):
+                    # idle 대기 (최대 1초)
+                    LOGGER.debug("TX idle wait (max 1.0s) before '%s'...", item.action)
+                    t0 = asyncio.get_running_loop().time()
+                    while not self.is_idle():
+                        await asyncio.sleep(0.01)
+                        if asyncio.get_running_loop().time() - t0 > 1.0:
+                            LOGGER.debug("Idle wait timeout (%.2fs).", asyncio.get_running_loop().time() - t0)
+                            break
+
+                    # 연결 확인
+                    if not self.conn._is_connected():
+                        LOGGER.warning("Connection not ready. '%s' abort.", item.action)
+                        break
+
+                    # 전송
+                    try:
+                        await self.conn.send(packet)
+                    except Exception as e:
+                        LOGGER.warning("Send failed on attempt %d: %s", attempt, e)
+                        if attempt < SEND_RETRY_MAX:
+                            await asyncio.sleep(SEND_RETRY_GAP)
+                            continue
+                        else:
+                            break
+
+                    self._last_tx_monotonic = asyncio.get_running_loop().time()
+
+                    # 확인 대기
+                    try:
+                        _ = await self._wait_for_confirmation(item.key, expect_predicate, timeout)
+                        LOGGER.debug("Command '%s' confirmed (attempt %d).", item.action, attempt)
+                        success = True
+                        break
+                    except asyncio.TimeoutError:
+                        if attempt < SEND_RETRY_MAX:
+                            LOGGER.warning(
+                                "No confirmation for '%s' (attempt %d/%d). Retrying in %.2fs...",
+                                item.action, attempt, SEND_RETRY_MAX, SEND_RETRY_GAP
+                            )
+                            await asyncio.sleep(SEND_RETRY_GAP)
+                        else:
+                            LOGGER.error("Command '%s' failed after %d attempts.", item.action, SEND_RETRY_MAX)
+
+                if not item.future.done():
+                    item.future.set_result(success)
+
+                self._tx_queue.task_done()
+        except asyncio.CancelledError:
+            LOGGER.debug("Sender loop cancelled")
+            raise
