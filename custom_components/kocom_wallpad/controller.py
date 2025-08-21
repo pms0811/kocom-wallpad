@@ -239,22 +239,22 @@ class KocomController:
                 "hvac_modes": [HVACMode.HEAT, HVACMode.OFF],
                 "feature_preset": True,
                 "preset_modes": [PRESET_AWAY, PRESET_NONE],
-                "temp_step": self._device_storage.get("thermo_step", 1.0),
+                "temp_step": self._device_storage.get(f"{key.unique_id}_thermo_step", 1.0),
             }
             state = {
                 "hvac_mode": havc_mode,
                 "preset_mode": preset_mode,
-                "target_temp": self._device_storage.get("thermo_target", target_temp),
-                "current_temp": self._device_storage.get("thermo_current", current_temp),
+                "target_temp": self._device_storage.get(f"{key.unique_id}_thermo_target", target_temp),
+                "current_temp": self._device_storage.get(f"{key.unique_id}_thermo_current", current_temp),
             }
-            if target_temp % 1 == 0.5 and self._device_storage.get("thermo_step") != 0.5:
+            if target_temp % 1 == 0.5 and self._device_storage.get(f"{key.unique_id}_thermo_step") != 0.5:
                 LOGGER.debug("0.5°C step detected, heating supports 0.5 increments.")
-                self._device_storage["thermo_step"] = 0.5
+                self._device_storage[f"{key.unique_id}_thermo_step"] = 0.5
             if target_temp != 0 and current_temp != 0:
-                if havc_mode == HVACMode.HEAT and self._device_storage.get("thermo_target") != target_temp:
+                if havc_mode == HVACMode.HEAT and self._device_storage.get(f"{key.unique_id}_thermo_target") != target_temp:
                     LOGGER.debug(f"User target temperature update: {target_temp}")
-                    self._device_storage["thermo_target"] = target_temp
-                self._device_storage["thermo_current"] = current_temp
+                    self._device_storage[f"{key.unique_id}_thermo_target"] = target_temp
+                self._device_storage[f"{key.unique_id}_thermo_current"] = current_temp
             dev = DeviceState(key=key, platform=Platform.CLIMATE, attribute=attribute, state=state)
             states.append(dev)
             
@@ -677,7 +677,7 @@ class KocomController:
     def _generate_thermostat(self, action: str, data: bytes, **kwargs: Any) -> bytes:
         if action == "set_hvac":
             hm = kwargs["hvac_mode"]
-            data[0] = 0x11 if hm == HVACMode.HEAT else 0x01
+            data[0] = 0x11 if hm == HVACMode.HEAT else 0x00
             data[1] = 0x00
         elif action == "set_preset":
             pm = kwargs["preset_mode"]
