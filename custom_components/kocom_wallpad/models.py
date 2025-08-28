@@ -49,7 +49,7 @@ VENTILATION_PRESET_MAP = {
     0x02: "auto",
     0x03: "bypass",
     0x05: "sleep",
-    0x08: "air purification"
+    0x09: "air purification"
 }
 
 ELEVATOR_DIRECTION_MAP = {
